@@ -71,6 +71,21 @@ const addParticipants = async (conversationId, participants) => {
     });    
     return participants;
 };
+const removeParticipants = async (conversationId, participants) => {
+    const conversation = await Conversations.findById(conversationId);
+    if (!conversation) {
+        throw new Error('Conversation not found');
+    }
+    if (participants.includes(conservation.creator.toString())){
+        throw new Error('Creator cannot be removed');
+    }
+    const updateConversation = await Conversations.findByIdAndUpdate(
+        conversationId,
+        {$pull: {participants: { $in: participants }}},
+        {new: true}
+    );
+    return updateConversation;
+}
 const updateConversation = async (conversationId, data) => {
     const conversation = await Conversations.findById(conversationId);
     if (!conversation) {
@@ -98,6 +113,7 @@ module.exports = {
     getConservationsById,
     sendMessage,
     addParticipants,
+    removeParticipants,
     updateConversation,
     deleteConversation
 }
