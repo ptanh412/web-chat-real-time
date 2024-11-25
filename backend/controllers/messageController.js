@@ -1,6 +1,6 @@
 const messageService = require('../services/messageService');
 const socket = require('../socket/socket');
-const conversationService = require('../services/conversationService');
+const conversationService = require('../services/conservationService');
 const sendMessage = async(req,res) =>{
     try {
         const { conversationId, content, type, attachments} = req.body;

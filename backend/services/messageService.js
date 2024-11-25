@@ -1,5 +1,5 @@
 const Messages = require('../models/Messages');
-const Conversations = require('../models/Conversations');
+const Conversations = require('../models/Conservations');
 
 const createMessage = async ({ conversationId, sender, content, type, attachments }) => {
     const message = new Messages({ conversationId, sender, content, type, attachments });

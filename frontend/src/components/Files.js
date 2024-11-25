@@ -1,5 +1,5 @@
 import React from "react";
-
+import { MdDownloadForOffline } from "react-icons/md";
 const Files = () => {
   const files = [
     { name: "Document1.pdf", type: "PDF" },

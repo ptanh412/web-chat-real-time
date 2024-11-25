@@ -2,7 +2,7 @@
 const { Server } = require('socket.io');
 const User = require('../models/Users');
 const Message = require('../models/Messages');
-const Conversation = require('../models/Conversations');
+const Conversation = require('../models/Conservations');
 const messageService = require('../services/messageService');
 const notificationService = require('../services/notificationService');
 const friendshipService = require('../services/friendshipService');

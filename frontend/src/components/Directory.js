@@ -1,5 +1,5 @@
 import React from "react";
-
+import { BsThreeDotsVertical } from "react-icons/bs";
 const Directory = () => {
   const teamMembers = [
     { name: "Florencio Dorrance", role: "Manager" },
