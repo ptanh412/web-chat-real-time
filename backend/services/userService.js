@@ -1,7 +1,7 @@
 // ../services/userService.js
 const User = require('../models/Users');
 const { hashPassword, comparePassword } = require('../utils/encryption');
-const {generateToken } = require('../utils/jwt');
+const { generateToken } = require('../utils/jwt');
 
 
 const createUser = async ({ name, email, password, avatar }) => {
@@ -23,13 +23,15 @@ const authenticateUser = async ({ email, password }) => {
     if (!isPasswordMatch) {
         throw new Error('Password is incorrect');
     }
-    return generateToken({ id: user._id });
+    const token = generateToken({ id: user._id });
+    await User.findByIdAndUpdate(user._id, { status: 'online', lastActive: new Date() });
+    return { token, name: user.name, avatar: user.avatar, status: user.status, _id: user._id };
 };
 
 const getUserById = async (id) => {
     return await User.findById(id).select('-password');
 };
-const updateUser = async (id, data) =>{
+const updateUser = async (id, data) => {
     const allowedFields = ['name', 'email', 'avatar'];
     const filterData = Object.keys(data)
         .filter(key => allowedFields.includes(key))
@@ -37,7 +39,7 @@ const updateUser = async (id, data) =>{
             obj[key] = data[key];
             return obj;
         }, {});
-    
+
     return await User.findByIdAndUpdate(id, filterData, {
         new: true,
     });
@@ -48,7 +50,7 @@ const updatePassword = async (id, password) => {
         new: true,
     });
 };
-const updateStatus = async (userId, status) =>{
+const updateStatus = async (userId, status) => {
     console.log(`Updating status for user ${userId} to ${status}`);
     try {
         const updatedUser = await User.findByIdAndUpdate(
@@ -62,7 +64,7 @@ const updateStatus = async (userId, status) =>{
                 runValidators: true
             }
         );
-        console.log('Updated user status:', updatedUser); 
+        console.log('Updated user status:', updatedUser);
         return updatedUser;
     } catch (error) {
         console.error('Error updating status:', error);
@@ -70,8 +72,11 @@ const updateStatus = async (userId, status) =>{
     }
 }
 
-const getOnlineUsers = async () =>{
-    return await User.find({status: 'online'}).select('name avatar');
+const getOnlineUsers = async () => {
+    return await User.find({ status: 'online' }).select('name avatar');
+}
+const logout = async (userId) => {
+    await User.findByIdAndUpdate(userId, { status: 'offline' });
 }
 module.exports = {
     createUser,
@@ -80,5 +85,6 @@ module.exports = {
     updateUser,
     updatePassword,
     updateStatus,
-    getOnlineUsers
+    getOnlineUsers,
+    logout
 }

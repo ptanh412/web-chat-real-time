@@ -1,10 +1,12 @@
+//..../controllers/friendshipController.js
 const friendshipService = require('../services/friendshipService');
-
-
 const sendFriendRequest = async (req, res) => {
     try {
         const {recipientId} = req.body;
         const requesterId = req.user._id;
+        
+        console.log("Requester id: ", requesterId);
+        console.log("Recipient id: ", recipientId);
         const friendship = await friendshipService.senderFriendRequest(requesterId, recipientId);
         res.status(201).json({success: true, data: friendship});
     } catch (error) {
@@ -63,7 +65,15 @@ const getFriendList = async (req, res) => {
         res.status(400).json({success: false, message: error.message});
     }
 }
-
+const getUnfriend = async(req, res) =>{
+    try {
+        const userId = req.user._id;
+        const users = await friendshipService.getUnfriend(userId);
+        res.status(200).json({success: true, data: users});
+    } catch (error) {
+        res.status(400).json({sucess: false, message: error.message});
+    }
+}
 module.exports = {
     sendFriendRequest,
     acceptFriendRequest,
@@ -71,4 +81,5 @@ module.exports = {
     removeFriend,
     getFriendRequests,
     getFriendList,
+    getUnfriend
 }   

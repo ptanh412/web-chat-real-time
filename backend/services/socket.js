@@ -3,7 +3,7 @@ const dotenv = require('dotenv');
 // ../services/socket.js
 const socket = io('http://localhost:3000', {
     auth:{
-        token: env.process.JWT_SECRET_KEY
+        token: process.env.JWT_SECRET_KEY
     }
 })
 
@@ -12,5 +12,5 @@ socket.on('connect', () =>{
 });
 
 socket.on('updatePassword', (data) =>{
-    console.log(data.message);
+    console.log("update password: ",data.message);
 });

@@ -1,29 +1,37 @@
 const mongoose = require('mongoose');
 
 const FriendshipsSchema = new mongoose.Schema({
-    requester:{
+    requester: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
-    recipient:{
+    recipient: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
-    status:{
+    status: {
         type: String,
         enum: ['pending', 'accepted', 'rejected'],
         default: 'pending'
     },
-    createdAt:{
+    createdAt: {
         type: Date,
         default: Date.now
     },
-    updatedAt:{
+    updatedAt: {
         type: Date,
         default: Date.now
     }
+}, {
+    indexes: [
+        {
+            unique: true,
+            fields: ['requester', 'recipient', 'status'],
+            partialFilterExpression: { status: 'pending' }
+        }
+    ]   
 });
 
 module.exports = mongoose.model('Friendships', FriendshipsSchema);

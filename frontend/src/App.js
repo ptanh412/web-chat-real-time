@@ -9,8 +9,10 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
 import { AlertContext, AlertProvider } from "./context/AlertMessage";
 import { FaCheckCircle, FaExclamationCircle } from "react-icons/fa";
+import { UserProvider } from "./context/UserContext";
 const App = () => {
   return (
+    <UserProvider>
     <AlertProvider>
       <Router>
         <Routes>
@@ -21,6 +23,7 @@ const App = () => {
         </Routes>
       </Router>
     </AlertProvider>
+    </UserProvider>
   );
 };
 const ChatPage = () => {

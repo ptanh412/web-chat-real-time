@@ -5,8 +5,11 @@ import { FaCheckCircle, FaExclamationCircle } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useContext } from 'react';
-import { AlertContext } from '../context/AlertMessage'; 
+import { AlertContext } from '../context/AlertMessage';
+import io from "socket.io-client";
+import { useUser } from '../context/UserContext.js';
 const Login = () => {
+    const { setUser } = useUser();
     const { alertMessage, alertType, showAlert } = useContext(AlertContext);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -33,7 +36,19 @@ const Login = () => {
             });
             if (response.status === 200) {
                 console.log(response.data);
-                localStorage.setItem("token", response.data.data.token);
+                const { token, name, avatar, status, _id } = response.data.data;
+                localStorage.setItem("token", token);
+                localStorage.setItem("name", name);
+                localStorage.setItem("avatar", avatar);
+                localStorage.setItem("status", status);
+                localStorage.setItem("userId", _id);
+
+                const socketInstance = io("http://localhost:5000", {
+                    query: { userId: _id },
+                });
+                
+                socketInstance.emit("user:online", _id);
+                setUser({ name, avatar, status, _id, token });
                 navigation("/chat");
                 showAlert(response.data.message, "success");
             } else {
@@ -41,7 +56,7 @@ const Login = () => {
             }
         } catch (error) {
             console.log(error);
-            showAlert("Invalid email or password", "error");
+            showAlert("Error", "error");
         }
     }
     const handleRegister = async (e) => {

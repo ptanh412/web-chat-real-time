@@ -9,4 +9,5 @@ router.get('/profile',authenticate, userController.getUserProfile);
 router.put('/update-profile',authenticate, userController.updateProfile);
 router.put('/update-password',authenticate, userController.updatePassword);
 router.put('/update-status',authenticate, userController.updateStatus);
+router.post('/logout',authenticate, userController.logout);
 module.exports = router;

@@ -1,22 +1,51 @@
+//../models/friendshipService.js
+const mongoose = require('mongoose');
 const Friendships = require('../models/Friendships');
 const Users = require('../models/Users');
 
 const senderFriendRequest = async (requesterId, recipientId) => {
-    const existingRequest = await Friendships.findOne({
-        requester: requesterId,
-        recipient: recipientId,
-    });
-    if (existingRequest) {
-        throw new Error('Friend request already sent');
+    try {
+        const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
+        const recipientObjectId = new mongoose.Types.ObjectId(recipientId);
+        console.log('Requester id:', requesterObjectId);
+        console.log('Recipient id:', recipientObjectId);
+
+        const existingRequest = await Friendships.findOne({
+            $or: [
+                { requester: requesterObjectId, recipient: recipientObjectId, status: 'pending' },
+                { requester: recipientObjectId, recipient: requesterObjectId, status: 'pending' }
+            ]
+        });
+
+        console.log('Existing request:', existingRequest);
+
+        if (existingRequest) {
+            throw new Error('Friend request already sent and is pending');
+        }
+
+        const friendship = new Friendships({
+            requester: requesterObjectId,
+            recipient: recipientObjectId,
+            status: 'pending'
+        });
+
+        return await friendship.save();
+    } catch (error) {
+        console.error('Error creating friendship:', error);
+        throw error;
     }
-    const friendship = new Friendships({
-        requester: requesterId,
-        recipient: recipientId,
-        status: 'pending',
+};
+const checkExistingRequest = async (requesterId, recipientId) => {
+    const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
+    const recipientObjectId = new mongoose.Types.ObjectId(recipientId);
+    return await Friendships.findOne({
+        $or: [
+            { requester: requesterObjectId, recipient: recipientObjectId, status: 'pending' },
+            { requester: recipientObjectId, recipient: requesterObjectId, status: 'pending' }
+        ]
     });
-    await friendship.save();
-    return friendship;
-}
+};
+
 
 const acceptFriendRequest = async (friendshipId) => {
     const friendship = await Friendships.findById(friendshipId);
@@ -41,8 +70,8 @@ const rejectedFriendRequest = async (friendshipId) => {
 const removeFriend = async (requesterId, recipientId) => {
     const friendship = await Friendships.findOneAndDelete({
         $or: [
-            {requester: requesterId, recipient: recipientId},
-            {requester: recipientId, recipient: requesterId},
+            { requester: requesterId, recipient: recipientId },
+            { requester: recipientId, recipient: requesterId },
         ],
         status: 'accepted',
     })
@@ -53,8 +82,8 @@ const getFriendRequests = async (userId, status = 'pending') => {
         recipient: userId,
         status,
     })
-    .populate('requester', 'name avatar')
-    .sort({ createdAt: -1 });
+        .populate('requester', 'name avatar')
+        .sort({ createdAt: -1 });
 }
 
 const getallFriends = async (userId) => {
@@ -68,13 +97,32 @@ const getallFriends = async (userId) => {
         .populate('recipient', 'name avatar')
         .sort({ updatedAt: -1 });
 }
-
+const getUnfriend = async (userId) => {
+    const friendships = await Friendships.find({
+        $or: [
+            { requester: userId },
+            { recipient: userId },
+        ]
+    });
+    const connectedUserIds = friendships.map(friendship => {
+        return friendship.requester.toString() == userId.toString()
+            ? friendship.recipient.toString()
+            : friendship.requester.toString();
+    })
+    connectedUserIds.push(userId.toString());
+    const unfriendedUsers = await Users.find({
+        _id: { $nin: connectedUserIds },
+    }).select('name avatar status');
+    return unfriendedUsers;
+}
 module.exports = {
     senderFriendRequest,
+    checkExistingRequest,
     acceptFriendRequest,
     rejectedFriendRequest,
     removeFriend,
     getFriendRequests,
-    getallFriends
+    getallFriends,
+    getUnfriend,
 }
 

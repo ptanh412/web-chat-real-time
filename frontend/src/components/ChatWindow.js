@@ -1,14 +1,39 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import useMessages from "../hooks/useMessages";
 import Message from "./Message";
 import { GoDotFill } from "react-icons/go";
 import img1 from "../assets/avatars/1920x1080_px_architecture_Hotels_Marina_Bay_reflection_Singapore-1199381.jpg";
 import { IoIosSend } from "react-icons/io";
 import { MdAttachFile } from "react-icons/md";
+import { useUser } from "../context/UserContext";
 
-const ChatWindow = ({ roomId }) => {
-    // const { messages, newMessage, sendMessage, handleMessageChange } = useMessages(roomId);
+const ChatWindow = ({selectedUser, currentUser}) => {
+    const {socket} = useUser();
+    const [messages, setMessages] = useState([]);
+    useEffect(() =>{
+        if (!socket || !selectedUser) return;
 
+        socket.emit('get:messages', {
+            senderId: currentUser._id,
+            receiverId: selectedUser._id
+        });
+
+        socket.on('messages:received', (newMessages) =>{
+            setMessages(prev => [...prev, ...newMessages]);
+        });
+
+        return () => {
+            socket.off('messages:received');
+        }
+    }, [socket, selectedUser, currentUser]);
+
+    const sendMessage = (messageText) =>{
+        socket.emit('message:send', {
+            senderId: currentUser._id,
+            receiverId: selectedUser._id,
+            message: messageText
+        })
+    }
     return (
         <div className="border-x-2 mt-3 h-screen flex flex-col">
             <div className="border-b-2 py-2 flex space-x-10 px-5 flex-none">

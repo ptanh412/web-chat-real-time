@@ -15,10 +15,11 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-const io = require('socket.io')(server);
-setUpSocket(io);
-// app.set('socketio', io);
-app.use(cors());
+const io = setUpSocket(server);
+app.set('socketio', io);
+app.use(cors({
+    origin: 'http://localhost:3000',
+}));
 app.use(express.json());
 app.use('/api/users', userRouter);
 app.use('/api/messages', messageRouter);

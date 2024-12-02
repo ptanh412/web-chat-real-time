@@ -1,12 +1,15 @@
+//...routes/friendshipRoute.js
 const express = require('express');
 const router = express.Router();
 const friendshipController = require('../controllers/friendshipContronller');
+const auth = require('../middlewares/auth')
 
-router.post('/friend-request', friendshipController.sendFriendRequest);
-router.get('/friend-request', friendshipController.getFriendRequests);
-router.put('friend-request/:friendshipId/accept', friendshipController.acceptFriendRequest);
-router.put('friend-request/:friendshipId/reject', friendshipController.rejectedFriendRequest);
-router.delete('/friend/:friendshipId', friendshipController.removeFriend);
-router.get('/friends', friendshipController.getFriendList);
+router.post('/friend-request',auth, friendshipController.sendFriendRequest);
+router.get('/friend-request',auth, friendshipController.getFriendRequests);
+router.put('/friend-request/:friendshipId/accept',auth, friendshipController.acceptFriendRequest);
+router.put('/friend-request/:friendshipId/reject',auth, friendshipController.rejectedFriendRequest);
+router.delete('/friend/:friendshipId',auth, friendshipController.removeFriend);
+router.get('/friends',auth, friendshipController.getFriendList);
+router.get('/unfriend',auth, friendshipController.getUnfriend);
 
 module.exports = router;

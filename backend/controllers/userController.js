@@ -15,8 +15,8 @@ const register = async (req, res) => {
 const login = async (req, res) => {
     try {
         const {email, password} = req.body;
-        const token = await userService.authenticateUser({email, password});
-        res.status(200).json({message: "User login sucessfully", data: {token}});
+        const {token, name, avatar, status, _id } = await userService.authenticateUser({email, password});
+        res.status(200).json({message: "User login sucessfully", data: {token, name, avatar, status, _id}});
     } catch (error) {
         res.status(400).json({message: error.message});
     }
@@ -70,11 +70,21 @@ const updateStatus = async (req, res) =>{
         res.status(400).json({ message: error.message });
     }
 }
+const logout = async (req, res) => {
+    try {
+        const userId = getUserIdFromToken(req);
+        await userService.logout(userId);
+        res.status(200).json({ message: 'User logged out' });
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
 module.exports = {
     register,
     login,
     getUserProfile,
     updateProfile,
     updatePassword,
-    updateStatus
+    updateStatus,
+    logout
 };

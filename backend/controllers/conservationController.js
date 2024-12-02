@@ -24,7 +24,7 @@ const getUserConservations = async (req, res) =>{
 const getConservation = async (req, res) =>{
     try {
         const {conversationId} = req.params;
-        const conservation = await conservationService.getConservation(conversationId);
+        const conservation = await conservationService.getConservationsById(conversationId);
         if(!conservation){
             return res.status(404).json({message: 'Conservation not found'})
         };
