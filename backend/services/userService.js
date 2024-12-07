@@ -25,7 +25,7 @@ const authenticateUser = async ({ email, password }) => {
     }
     const token = generateToken({ id: user._id });
     await User.findByIdAndUpdate(user._id, { status: 'online', lastActive: new Date() });
-    return { token, name: user.name, avatar: user.avatar, status: user.status, _id: user._id };
+    return { token, name: user.name, avatar: user.avatar, status: user.status, _id: user._id, lastActive: user.lastActive};
 };
 
 const getUserById = async (id) => {

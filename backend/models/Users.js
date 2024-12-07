@@ -40,6 +40,5 @@ const userSchema = new mongoose.Schema({
         default: Date.now,
     },
 });
-// userSchema.index({ email: 1 }, { unique: true });
 
 module.exports = mongoose.model('Users', userSchema);

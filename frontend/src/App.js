@@ -1,33 +1,77 @@
-import React, { useContext } from "react";
+import React, { useContext, useEffect, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import Directory from "./components/Directory";
 import Files from "./components/Files";
 import "../src/styles/index.css";
-import Message from "./components/Message";
+import ConvesationList from "./components/ConvesationList";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
 import { AlertContext, AlertProvider } from "./context/AlertMessage";
 import { FaCheckCircle, FaExclamationCircle } from "react-icons/fa";
-import { UserProvider } from "./context/UserContext";
+import { UserProvider, useUser } from "./context/UserContext";
 const App = () => {
   return (
     <UserProvider>
-    <AlertProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Login />} />
-          <Route path="/chat" element={
-            <ChatPage />
-          } />
-        </Routes>
-      </Router>
-    </AlertProvider>
+      <AlertProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/chat" element={
+              <ChatPage />
+            } />
+          </Routes>
+        </Router>
+      </AlertProvider>
     </UserProvider>
   );
 };
 const ChatPage = () => {
+  const { user, socket } = useUser();
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [conversations, setConversations] = useState([]);
   const { alertMessage, alertType } = useContext(AlertContext);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.emit('get:conversations');
+    socket.on('conversations:list', (conversationsList) => {
+      setConversations(conversationsList);
+    });
+
+    socket.on('conversation:created', (conversation) => {
+      console.log('New conversation:', conversation);
+      setSelectedConversation(prev => ({
+        ...conversation,
+        _id: conversation._id || (prev ? prev._id : null),
+      }));
+      setConversations((prevConversations) => {
+        // Avoid duplicates
+        const exists = prevConversations.some(conv => conv._id === conversation._id);
+        return exists
+          ? prevConversations
+          : [...prevConversations, conversation];
+      });
+    })
+
+    return () => {
+      socket.off('conversation:created');
+      socket.off('conversations:list');
+    }
+  }, [socket]);
+  useEffect(() => {
+    console.log('Selected Conversation (Full):', selectedConversation);
+    console.log('Selected Conversation ID:', selectedConversation?._id);
+  }, [selectedConversation]);
+
+  const handleMessageClick = (conversation) => {
+    if (socket && conversation._id) {
+      socket.emit('message:read', conversation._id);
+      setSelectedConversation(conversation);
+    }
+  }
+  console.log(selectedConversation)
   return (
     <>
       {alertMessage && (
@@ -44,11 +88,16 @@ const ChatPage = () => {
         </div>
         <div className="w-full flex justify-between h-screen">
           <div className="flex-1 flex flex-col">
-            <Message className="flex-1" />
+            <ConvesationList className="flex-1" setSelectedConversation={setSelectedConversation} onMessageClick={handleMessageClick} />
           </div>
 
           <div className=" flex-[2] flex flex-col">
-            <ChatWindow className="flex-1" />
+            {selectedConversation && (
+              <ChatWindow
+                conversation={selectedConversation}
+                currentUser={user}
+              />
+            )}
           </div>
 
           <div className="flex-1 flex flex-col">

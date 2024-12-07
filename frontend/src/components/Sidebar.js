@@ -82,12 +82,12 @@ const Sidebar = () => {
   useEffect(() => {
     if (socket && user?._id) {
       const handleRoomsList = (rooms) => {
-        console.log('Rooms received from server:', rooms);
+        // console.log('Rooms received from server:', rooms);
       };
       const handleConnect = () => {
         console.log('Socket connected:', socket.id);
         socket.emit('joinRoom', `user:${user._id}`);
-        console.log('Join room:', `user:${user._id}`);
+        // console.log('Join room:', `user:${user._id}`);
         socket.emit('getRooms');
       };
       socket.on('connect', handleConnect);

@@ -10,6 +10,7 @@ export const UserProvider = ({ children }) => {
         token: localStorage.getItem("token") || "",
         status: localStorage.getItem("status") || "Hey there! I'm using WhatsApp.",
         avatar: localStorage.getItem("avatar") || "",
+        lastActive: localStorage.getItem("lastActive") || "",
     }));
 
     const [socket, setSocket] = useState(null);
@@ -32,6 +33,7 @@ export const UserProvider = ({ children }) => {
                 setUser((prevUser) => {
                     const updatedUser = { ...prevUser, status: data.status };
                     localStorage.setItem("status", data.status); // Lưu trạng thái mới vào localStorage
+                    localStorage.setItem("lastActive", data.lastActive); // Lưu thời gian hoạt động cuối cùng vào localStorage
                     return updatedUser;
                 });
             }
@@ -48,6 +50,8 @@ export const UserProvider = ({ children }) => {
             name: "Guest",
             token: "",
             status: "offline",
+            avatar: "",
+            lastActive: null,
         });
         if(socket){
             socket.disconnect();

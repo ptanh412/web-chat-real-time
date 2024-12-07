@@ -15,8 +15,8 @@ const register = async (req, res) => {
 const login = async (req, res) => {
     try {
         const {email, password} = req.body;
-        const {token, name, avatar, status, _id } = await userService.authenticateUser({email, password});
-        res.status(200).json({message: "User login sucessfully", data: {token, name, avatar, status, _id}});
+        const {token, name, avatar, status, _id, lastActive } = await userService.authenticateUser({email, password});
+        res.status(200).json({message: "User login sucessfully", data: {token, name, avatar, status, _id, lastActive}});
     } catch (error) {
         res.status(400).json({message: error.message});
     }

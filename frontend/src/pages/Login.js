@@ -36,12 +36,13 @@ const Login = () => {
             });
             if (response.status === 200) {
                 console.log(response.data);
-                const { token, name, avatar, status, _id } = response.data.data;
+                const { token, name, avatar, status, _id, lastActive } = response.data.data;
                 localStorage.setItem("token", token);
                 localStorage.setItem("name", name);
                 localStorage.setItem("avatar", avatar);
                 localStorage.setItem("status", status);
                 localStorage.setItem("userId", _id);
+                localStorage.setItem("lastActive", lastActive);
 
                 const socketInstance = io("http://localhost:5000", {
                     query: { userId: _id },

@@ -26,6 +26,13 @@ const messageSchema = new mongoose.Schema({
         enum: ['sent', 'delivered', 'read'],
         default: 'sent',
     },
+    sentAt: {
+        type: Date,
+        default: Date.now,
+    },
+    deliveredAt: {
+        type: Date,
+    },
     attachments:[{
         url: String,
         type: String,

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const conservationSchema = new mongoose.Schema({
+const conversationSchema = new mongoose.Schema({
     type:{
         type: String,
         required: true,
@@ -8,7 +8,7 @@ const conservationSchema = new mongoose.Schema({
     },
     participants: [{
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: 'Users',
         required: true,
     }],
     name: {
@@ -17,12 +17,12 @@ const conservationSchema = new mongoose.Schema({
     },
     creator:{
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: 'Users',
         required: true,
     },
     lastMessage: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Message',	
+        ref: 'Messages',	
     },
     unreadCount: {
         type: Number,
@@ -37,4 +37,11 @@ const conservationSchema = new mongoose.Schema({
         default: Date.now,
     },
 });
-module.exports = mongoose.model('Conservations', conservationSchema);    
+conversationSchema.pre(/^find/, function (next) {
+    this.populate({
+        path: 'participants',
+        select: 'name avatar status lastActive',
+    });
+    next();
+})
+module.exports = mongoose.model('Conversations', conversationSchema);    
