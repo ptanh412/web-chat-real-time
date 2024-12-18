@@ -12,38 +12,74 @@ export const UserProvider = ({ children }) => {
         avatar: localStorage.getItem("avatar") || "",
         lastActive: localStorage.getItem("lastActive") || "",
     }));
-
     const [socket, setSocket] = useState(null);
 
     useEffect(() => {
-        const newSocket = io("http://localhost:5000", {
-            auth: { token: user.token },
-        });
-        setSocket(newSocket);
+        if (user.token) {
+            const newSocket = io("http://localhost:5000", {
+                auth: { token: user.token },
+            });
+            setSocket(newSocket);
+            newSocket.emit('user:online',{
+                _id: user._id,
+                status: 'online',
+                lastActive: new Date()
+            })
+            return () => {
+                newSocket.disconnect();
+            };
+        }
 
-        return () => {
-            newSocket.disconnect();
-        };
     }, [user.token]);
+
 
     useEffect(() => {
         if (!socket) return;
+
         const handleUserOnline = (data) => {
-            if (data.userId === user._id) {
-                setUser((prevUser) => {
-                    const updatedUser = { ...prevUser, status: data.status };
-                    localStorage.setItem("status", data.status); // Lưu trạng thái mới vào localStorage
-                    localStorage.setItem("lastActive", data.lastActive); // Lưu thời gian hoạt động cuối cùng vào localStorage
-                    return updatedUser;
-                });
-            }
+            // console.log('User Online Event:', data);
+
+            setUser((prevUser) => {
+                if (data._id === prevUser._id) {
+                    localStorage.setItem("status", data.status || 'online');
+                    localStorage.setItem("lastActive", data.lastActive || new Date());
+                }
+                return {
+                    ...prevUser,
+                    status: data._id === prevUser._id ? data.status || 'online' : prevUser.status,
+                    lastActive: data._id === prevUser._id ? data.lastActive || new Date() : prevUser.lastActive
+                }
+            });
         }
-        socket.on("user:online", handleUserOnline); 
+        const handleUserOffline = (data) => {
+            // console.log('User Offline Event:', data);
+            setUser((prevUser) => {
+                if (data._id === prevUser._id) {
+                    localStorage.setItem("status", data.status || 'offline');
+                    localStorage.setItem("lastActive", data.lastActive || new Date());
+                }
+                return {
+                    ...prevUser,
+                    status: data._id === prevUser._id ? data.status || 'offline' : prevUser.status,
+                    lastActive: data._id === prevUser._id ? data.lastActive || new Date() : prevUser.lastActive
+                }
+            });
+        }
+        socket.on("user:online", handleUserOnline);
+        socket.on("user:offline", handleUserOffline);
         return () => {
             socket.off("user:online", handleUserOnline);
+            socket.off("user:offline", handleUserOffline);
         };
     }, [socket, user._id]);
-    const logout =() =>{
+    const logout = () => {
+        if (socket) {
+            socket.emit('user:offline', {
+                _id: user._id,
+                status: 'offline',
+                lastActive: new Date()
+            });
+        }
         localStorage.clear();
         setUser({
             _id: "",
@@ -53,7 +89,7 @@ export const UserProvider = ({ children }) => {
             avatar: "",
             lastActive: null,
         });
-        if(socket){
+        if (socket) {
             socket.disconnect();
         }
         setSocket(null);
@@ -61,13 +97,12 @@ export const UserProvider = ({ children }) => {
     const updateUser = (updates) => {
         const updatedUser = { ...user, ...updates };
         setUser(updatedUser);
-        // Lưu thông tin mới vào localStorage
         for (const key in updates) {
             localStorage.setItem(key, updates[key]);
         }
     };
     return (
-        <UserContext.Provider value={{ user, setUser: updateUser, socket, logout }}>
+        <UserContext.Provider value={{ user, setUser, socket, setSocket, logout, updateUser }}>
             {children}
         </UserContext.Provider>
     );

@@ -9,7 +9,7 @@ router.get('/friend-request',auth, friendshipController.getFriendRequests);
 router.put('/friend-request/:friendshipId/accept',auth, friendshipController.acceptFriendRequest);
 router.put('/friend-request/:friendshipId/reject',auth, friendshipController.rejectedFriendRequest);
 router.delete('/friend/:friendshipId',auth, friendshipController.removeFriend);
-router.get('/friends',auth, friendshipController.getFriendList);
+router.get('/friendList',auth, friendshipController.getFriendList);
 router.get('/unfriend',auth, friendshipController.getUnfriend);
 
 module.exports = router;

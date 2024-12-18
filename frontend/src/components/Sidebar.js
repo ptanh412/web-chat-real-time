@@ -7,128 +7,153 @@ import { RiProfileLine } from "react-icons/ri";
 import { useUser } from "../context/UserContext";
 import { GoDotFill } from "react-icons/go";
 import { useNavigate } from "react-router-dom"; // Import useNavigateimport axios from "axios";
-import { MdOutlineCancel } from "react-icons/md";
+import { MdClose } from "react-icons/md";
 import axios from "axios";
 import { AlertContext } from "../context/AlertMessage";
+
 const Sidebar = () => {
   const { user, socket, logout } = useUser();
   const { showAlert } = useContext(AlertContext);
-  const [showListFriend, setShowListFriend] = useState(false);
-  const [friends, setFriends] = useState([]);
-  const [addFriends, setAddFriends] = useState([]);
   const [showNotification, setShowNotification] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [isAddFriend, setIsAddFriend] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const navigation = useNavigate();
 
-  const handleListFriend = () => {
-    setShowListFriend(!showListFriend);
-  }
-  const handleNotification = (e) => {
-    e.preventDefault();
-    setShowNotification(!showNotification);
-  }
+
+
   useEffect(() => {
-    const getFriends = async () => {
-      try {
-        const respone = await axios.get(`http://localhost:5000/api/friends/unfriend`,
-          {
+    const unreadCount = notifications.filter(
+      n => !n.isRead && (n.type === 'friend_request' || n.type === 'message')
+    ).length;
+    setUnreadNotificationsCount(unreadCount);
+  }, [notifications]);
+
+  const formatTimeAgo = (date) => {
+    const diff = new Date() - new Date(date);
+    const seconds = diff / 1000;
+
+    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    const minutes = seconds / 60;
+
+    if (minutes < 60) return `${Math.floor(minutes)}m`;
+    const hours = minutes / 60;
+
+    if (hours < 24) return `${Math.floor(hours)}h`;
+    const days = hours / 24;
+
+    if (days < 30) return `${Math.floor(days)}d`;
+    const months = days / 30;
+
+    if (months < 12) return `${Math.floor(months)}mo`;
+    const years = months / 12;
+
+    return `${Math.floor(years)}y`;
+  };
+  useEffect(() => {
+    const fetchNotification = async () => {
+      if (user?._id) {
+        try {
+          const response = await axios.get(`http://localhost:5000/api/notifications`, {
             headers: {
               Authorization: `Bearer ${user.token}`,
-            }
-          })
-        setFriends(respone.data.data || []);
-      } catch (error) {
-        console.log("Get friends failed: ", error);
-      }
-    }
-    getFriends();
-  }, [user.token])
-  const handleAddFriend = useCallback(
-    async (friendId) => {
-      if (
-        isAddFriend ||
-        addFriends.includes(friendId) ||
-        friends.some((f) => f.id === friendId)
-      ) {
-        if (addFriends.includes(friendId)) {
-          showAlert("Friend request already sent", "error");
-        } else if (friends.some((f) => f.id === friendId)) {
-          showAlert("This person is already your friend", "error");
-        } else {
-          showAlert("Friend request is in progress", "error");
-        }
-        return;
-      }
-
-      try {
-        setIsAddFriend(true);
-        socket.emit("friend:request", {
-          requesterId: user._id,
-          recipientId: friendId,
-          message: `${user.name} sent you a friend request`,
-        });
-
-        showAlert("Friend request sent successfully", "success");
-        setAddFriends((prev) => [...prev, friendId]);
-      } catch (error) {
-        console.log("Add friend failed: ", error);
-      } finally {
-        setIsAddFriend(false);
-      }
-    },
-    [isAddFriend, friends, user.token, socket]
-  );
-  useEffect(() => {
-    if (socket && user?._id) {
-      const handleRoomsList = (rooms) => {
-        // console.log('Rooms received from server:', rooms);
-      };
-      const handleConnect = () => {
-        console.log('Socket connected:', socket.id);
-        socket.emit('joinRoom', `user:${user._id}`);
-        // console.log('Join room:', `user:${user._id}`);
-        socket.emit('getRooms');
-      };
-      socket.on('connect', handleConnect);
-      socket.on('roomsList', handleRoomsList);
-      socket.on('connect_error', (error) => {
-        console.error('Socket connection error:', error);
-      });
-      const handleNotificationReceive = (notification) => {
-        console.group('Notification Received');
-        console.log('Raw notification:', notification);
-        if(!notification) {
-          console.warn('Received empty notification');
-          return;
-        }
-        try {
-          setNotifications((prev) => {
-            const isExisting = prev.some((notif) => notif._id === notification._id);
-            const updatedNotifications = isExisting 
-              ? prev 
-              : [...prev, notification];
-            console.log('Current notifications:', updatedNotifications);
-            return updatedNotifications;
+            },
           });
+          setNotifications(response.data.notifications);
         } catch (error) {
-          console.error('Error processing notification:', error);
+          console.log("Fetch notifications failed: ", error);
         }
-        console.groupEnd();
+      }
+    }
+    fetchNotification();
+
+    if (socket && user?._id) {
+      const handleNewFriendRequest = (requestData) => {
+
+        if (requestData.notification) {
+
+          if (requestData?.notification) {
+            setNotifications((prev) => {
+              const isExisting = prev.some(n => n._id === requestData.notification._id);
+
+              if (!isExisting) {
+                const updatedNotification = [
+                  requestData.notification,
+                  ...prev
+                ];
+
+                const unreadCount = updatedNotification.filter(
+                  n => !n.isRead &&
+                    (n.type === 'friend_request' || n.type === 'message')
+                ).length;
+                setUnreadNotificationsCount(unreadCount);
+                return updatedNotification;
+              }
+              return prev;
+            })
+
+          }
+        }
+      }
+      const handleFriendRequestSent = (requestData) => {
+        console.log('Friend request sent:', requestData);
       };
-      socket.on('notification:receive', handleNotificationReceive);
-      socket.on('error', (error) => {
-        console.error('Socket general error:', error);
-      });
+
+      const handleFriendRequestError = (error) => {
+        console.error('Friend request error:', error);
+      };
+
+      // Add socket listeners
+      socket.on('newFriendRequest', handleNewFriendRequest);
+      socket.on('friendRequestSent', handleFriendRequestSent);
+      socket.on('friendRequestError', handleFriendRequestError);
+
+      // Cleanup listeners
       return () => {
-        socket.off('connect', handleConnect);
-        socket.off('roomsList', handleRoomsList);
-        socket.off('notification:receive', handleNotificationReceive);
-        socket.off('connect_error');
-        socket.off('error');
+        socket.off('newFriendRequest', handleNewFriendRequest);
+        socket.off('friendRequestSent', handleFriendRequestSent);
+        socket.off('friendRequestError', handleFriendRequestError);
       };
     }
-  }, [socket, user._id, setNotifications]);
+  }, [socket, user?._id]);
+
+  const handleNotification = () => {
+    setShowNotification(!showNotification)
+    const readNotifications = notifications.map(n => ({
+      ...n,
+      isRead: true,
+    }));
+    setNotifications(readNotifications);
+    setUnreadNotificationsCount(0);
+
+    socket.emit('markNotificationAsRead', {
+      userId: user._id,
+      notificationIds: notifications.map(n => n._id)
+    });
+  }
+
+  const handleAcceptFriendRequest = async (requestId) => {
+    if (socket) {
+      socket.emit('respondToFriendRequest', {
+        requestId,
+        status: 'accepted',
+        userId: user._id,
+      })
+
+      setNotifications((prev) => prev.filter((n) => n.referenceId !== requestId));
+    }
+  }
+
+  const handleRejectFriendRequest = async (requestId) => {
+    if (socket) {
+      socket.emit('respondToFriendRequest', {
+        requestId,
+        status: 'rejected',
+        userId: user._id,
+      });
+
+      setNotifications((prev) => prev.filter((n) => n.referenceId !== requestId));
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -136,7 +161,7 @@ const Sidebar = () => {
     showAlert("Logout successfully", "success");
   };
   return (
-    <div className="flex flex-col items-center h-screen mt-2">
+    <div className="flex flex-col items-center h-screen mt-2 ">
       <img src={user.avatar} alt="avatar" className="w-16 h-16 rounded-full" />
       <p className="text-xl mt-2">{user.name}</p>
       <div className="flex items-center justify-center">
@@ -151,91 +176,86 @@ const Sidebar = () => {
           <AiOutlineMessage className="hover:text-blue-300 duration-300" />
         </li>
         <li className="mb-10">
-          <IoIosSearch className="hover:text-blue-300 duration-300" onClick={handleListFriend} />
+          <IoIosSearch className="hover:text-blue-300 duration-300" />
         </li>
-        {showListFriend && (
-          <div className="fixed inset-0 flex items-center justify-center p-3 bg-black bg-opacity-50 mt-0">
-            <div className="bg-white p-3 rounded-lg h-96 w-96 flex flex-col justify-center">
-              <div className="flex items-center">
-                <input
-                  type="text"
-                  className="bg-gray-200 w-full rounded-l-lg outline-none text-sm h-5 px-3 placeholder-transparent py-3"
-                  placeholder="Search friend"
-                />
-                <IoIosSearch className="bg-gray-200 rounded-r-lg hover:bg-slate-200 transition-colors duration-300 h-6 w-5 text-gray-500" />
-              </div>
-              <p className="mt-2 ml-2 font-semibold text-sm">Suggestion</p>
-              <ul className=" space-y-5 mt-3 flex-1">
-                {Array.isArray(friends) && friends.map((friend) => (
-                  <li className="flex justify-between items-center">
-                    <div className="flex justify-between space-x-3 items-center">
-                      <img src={friend.avatar} alt="avatar" className="w-8 h-8 rounded-full" />
-                      <p className="text-sm font-semibold">{friend.name}</p>
-                    </div>
-                    <div className="space-x-3">
-                      <button
-                        className={`text-white rounded-lg px-3 text-sm font-semibold ${addFriends.includes(friend._id)
-                          ? "bg-gray-300 cursor-not-allowed"
-                          : "bg-red-400 hover:bg-red-300 transition-colors duration-300"
-                          }`}
-                        onClick={() => handleAddFriend(friend._id)}
-                        disabled={addFriends.includes(friend._id)}
-                      >
-                        {addFriends.includes(friend._id) ? "Request sent" : "Add friend"}
-                      </button>
-                      <button className="bg-blue-500 hover:bg-blue-300 transition-colors duration-300 text-white rounded-lg px-3 text-sm font-semibold">Send message</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <button className="bg-red-500 text-white w-fit text-center rounded-lg font-semibold px-3 text-base ml-36 hover:bg-red-400 transition-colors duration-300" onClick={handleListFriend}>Close</button>
-            </div>
-          </div>
-        )}
+
         <li className="mb-10">
           <RiProfileLine className="hover:text-blue-300 duration-300" />
         </li>
         <li className="mb-10 relative">
-          <IoMdNotificationsOutline className="hover:text-blue-300 duration-300" onClick={handleNotification} />
-          {/* {showNotification && (
-            <div className="absolute top-0 left-10 bg-white border border-gray-300  rounded-md p-4 w-60 h-fit outline-none shadow-xl">
-              <ul className=" space-y-5 mt-3">
-                {notifications.map((notification) => (
-                  <li key={notification._id}>
-                    <p>{notification.content}</p>
-                  </li>
-                  // <li className="items-center w-48" key={notification._id}>
-                  //   <div className="flex justify-between space-x-3 items-center">
-                  //     <img src={notification.sender.avatar} alt="avatar" className="w-8 h-8 rounded-full" />
-                  //     <div className="w-full">
-                  //       <p className="text-sm font-semibold">{notification.sender.name}</p>
-                  //       <p className="text-xs text-gray-500">{notification.content}</p>
-                  //     </div>
-                  //   </div>
-                  //   <div className="flex mt-3 space-x-5 ml-10">
-                  //     <div className="bg-blue-400 hover:bg-blue-300 transition-colors duration-300 text-white rounded-lg flex items-center h-6 px-2 space-x-1">
-                  //       <FaCheckCircle className=" text-sm" />
-                  //       <button className="text-sm font-semibold">Accept</button>
-                  //     </div>
-                  //     <div className="bg-red-500 hover:bg-red-300 transition-colors duration-300 text-white rounded-lg px-3 flex justify-center items-center h-6 px-2 space-x-1">
-                  //       <MdOutlineCancel className="text-sm text-white" />
-                  //       <button className="text-sm font-semibold">Reject</button>
-                  //     </div>
-                  //   </div>
-                  // </li>
-                ))}
-              </ul>
+          <IoMdNotificationsOutline
+            className="hover:text-blue-300 duration-300"
+            onClick={handleNotification}
+          />
+          {unreadNotificationsCount > 0 && (
+            <div className="absolute top-0 left-4 -mt-1 -mr-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center">
+              <p className="text-xs">{unreadNotificationsCount}</p>
+
             </div>
-          )} */}
+          )}
           {showNotification && (
-            <div className="absolute top-0 left-10 bg-white border border-gray-300 rounded-md p-4 w-60 h-fit outline-none shadow-xl">
+            <div className="absolute top-7 left-3  bg-white border border-gray-300 rounded-md p-4 w-80 max-h-96 overflow-y-auto shadow-xl">
               {notifications.length === 0 ? (
-                <p>No notifications</p>
+                <div className="text-center text-gray-500">
+                  <p className="text-sm text-black font-semibold">No notifications 😊</p>
+                </div>
               ) : (
-                <ul className="space-y-5 mt-3">
+                <ul className="space-y-3">
                   {notifications.map((notification) => (
-                    <li key={notification._id}>
-                      <p>{notification.content}</p>
+                    <li
+                      key={notification._id}
+                      className={`flex items-center space-x-3 p-2 rounded-lg ${notification.isRead === false
+                        ? 'bg-blue-50 border-l-4 border-blue-500'
+                        : 'hover:bg-gray-100'
+                        }`}
+                    >
+                      {notification.type === 'friend_request' && (
+                        <>
+                          <img
+                            src={notification.sender?.avatar || ''}
+                            alt={notification.sender?.name || 'User'}
+                            className="w-10 h-10 rounded-full object-cover"
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{notification.content}</p>
+                            <div className="flex space-x-2 mt-2">
+                              <button
+                                className="bg-blue-500 hover:bg-blue-600 transition-colors duration-300 text-white rounded-lg px-3 py-1 text-xs flex items-center space-x-1"
+                                onClick={() => handleAcceptFriendRequest(notification.referenceId)}
+                              >
+                                <FaCheckCircle />
+                                <span>Accept</span>
+                              </button>
+                              <button
+                                className="bg-red-500 hover:bg-red-600 transition-colors duration-300 text-white rounded-lg px-3 py-1 text-xs flex items-center space-x-1"
+                                onClick={() => handleRejectFriendRequest(notification.referenceId)}
+                              >
+                                <MdClose />
+                                <span>Reject</span>
+                              </button>
+                            </div>
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {formatTimeAgo(notification.createdAt)}
+                          </span>
+                        </>
+                      )}
+
+                      {notification.type === 'message' && (
+                        <div className="flex items-center space-x-3 w-full">
+                          <img
+                            src={notification.sender?.avatar || '/default-avatar.png'}
+                            alt={notification.sender?.name || 'User'}
+                            className="w-10 h-10 rounded-full object-cover"
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm">{`${notification.sender?.name} send you message`}</p>
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {formatTimeAgo(notification.createdAt)}
+                          </span>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

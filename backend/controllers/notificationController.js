@@ -24,7 +24,10 @@ const getNotifications = async (req, res) => {
             req.user._id,
             isRead !== undefined ? isRead === 'true': 'false'
         );
-        res.status(200).json({data: notifications});
+        res.status(200).json({
+            notifications,
+            total: notifications.length
+        });
     } catch (error) {
         res.status(400).json({message: error.message});
     }

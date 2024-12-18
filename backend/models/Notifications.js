@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema({
     type: {
         type: String,
         required: true,
-        enum: ['friend_request', 'message', 'call'],
+        enum: ['friend_request','friend_request_accepted', 'friend_request_rejected', 'message', 'call'],
     },
     referenceId:{
         type: mongoose.Schema.Types.ObjectId,
@@ -18,6 +18,14 @@ const notificationSchema = new mongoose.Schema({
     content: {
         type: String,
         required: true,
+    },
+    sender:{
+        _id:{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Users'
+        },
+        name: String,
+        avatar: String,
     },
     isRead: {
         type: Boolean,
@@ -28,5 +36,6 @@ const notificationSchema = new mongoose.Schema({
         default: Date.now,
     }
 });
+const Notifications = mongoose.models.Notifications || mongoose.model('Notifications', notificationSchema);
 
-module.exports = mongoose.model('Notifications', notificationSchema);
+module.exports = Notifications;

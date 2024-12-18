@@ -15,6 +15,10 @@ const conversationSchema = new mongoose.Schema({
         type: String,
         default: '',
     },
+    avatarGroup: {
+        type: String,
+        default: 'https://res.cloudinary.com/doruhcyf6/image/upload/v1733975023/Pngtree_group_avatar_icon_design_vector_3667776_xq0dzv.png',
+    },
     creator:{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Users',

@@ -4,10 +4,10 @@ const mongoose = require('mongoose');
 const User = require('../models/Users');
 const Message = require('../models/Messages');
 const Conversation = require('../models/Conservations');
-const messageService = require('../services/messageService');
-const notificationService = require('../services/notificationService');
-const friendshipService = require('../services/friendshipService');
 const socketAuth = require('../middlewares/socketAuth');
+const Friendships = require('../models/Friendships');
+const Notifications = require('../models/Notifications');
+const Users = require('../models/Users');
 const setUpSocket = (server) => {
     const io = new Server(server, {
         cors: {
@@ -18,13 +18,8 @@ const setUpSocket = (server) => {
 
     io.use(socketAuth);
     const onlineUsers = new Map();
-    const pendingRequests = new Map();
 
     io.on("connection", async (socket) => {
-        socket.on('getRooms', () => {
-            const rooms = Array.from(socket.rooms);
-            socket.emit('roomsList', rooms);
-        });
 
         try {
             const userId = socket?.user?._id;
@@ -34,40 +29,70 @@ const setUpSocket = (server) => {
                 return;
             }
             console.log(`User ${userId} connected`);
+
+            socket.join(userId);
+
+            socket.on('getRooms', () => {
+                const rooms = Array.from(socket.rooms);
+                socket.emit('roomsList', rooms);
+            });
+
+
             socket.on('joinRoom', (room) => {
                 socket.join(room);
-                console.log('Server: Socket joined room', {
-                    socketId: socket.id,
-                    room: room,
-                    allRooms: Array.from(socket.rooms)
-                });
             });
             socket.emit('roomsList', Array.from(socket.rooms));
 
-            if (!onlineUsers.has(userId)) {
-                onlineUsers.set(userId, 1);
-                const updatedUser = await User.findByIdAndUpdate(
-                    userId,
-                    {
-                        status: 'online',
-                        lastActive: new Date()
-                    },
-                    { new: true }
-                )
-                io.emit('user:online', {
-                    userId,
-                    status: updatedUser.status,
-                    lastActive: updatedUser.lastActive
-                })
-            } else {
-                const connectionCount = onlineUsers.get(userId) + 1;
-                onlineUsers.set(userId, connectionCount);
-                io.emit('user:online', {
-                    userId,
+            const connectionCount = (onlineUsers.get(userId) || 0) + 1;
+            onlineUsers.set(userId, connectionCount);
+            const updatedUser = await User.findByIdAndUpdate(
+                userId,
+                {
                     status: 'online',
                     lastActive: new Date()
+                },
+                { new: true }
+            ).select('_id name avatar status lastActive');
+            if (updatedUser) {
+                io.emit('user:online', {
+                    _id: updatedUser._id,
+                    name: updatedUser.name || '',
+                    avatar: updatedUser.avatar || '',
+                    status: 'online',
+                    lastActive: updatedUser.lastActive || new Date()
                 })
             }
+            socket.on('user:offline', async (userData) => {
+                const userId = userData._id;
+
+                if (onlineUsers.has(userId)) {
+                    const newCount = onlineUsers.get(userId) - 1;
+
+                    if (newCount <= 0) {
+                        onlineUsers.delete(userId);
+
+                        const updatedUser = await User.findByIdAndUpdate(
+                            userId,
+                            {
+                                status: 'offline',
+                                lastActive: new Date()
+                            },
+                            { new: true }
+                        ).select('_id name avatar status lastActive');
+
+                        io.emit('user:offline', {
+                            _id: updatedUser._id,
+                            name: updatedUser.name,
+                            avatar: updatedUser.avatar,
+                            status: 'offline',
+                            lastActive: updatedUser.lastActive
+                        })
+                        console.log(`User ${userId} is offline`);
+                    } else {
+                        onlineUsers.set(userId, newCount);
+                    }
+                }
+            })
             socket.on('get:all-users', async () => {
                 try {
                     console.log('Get all users request received, userId:', userId);
@@ -154,6 +179,16 @@ const setUpSocket = (server) => {
 
             socket.on('create:conversation', async ({ receiverId, content }) => {
                 try {
+                    const friendship = await Friendships.findOne({
+                        $or: [
+                            { requester: userId, recipient: receiverId, status: 'accepted' },
+                            { requester: receiverId, recipient: userId, status: 'accepted' }
+                        ]
+                    })
+                    if (!friendship) {
+                        throw new Error('Friendship not found');
+                    }
+
                     let conversation = await Conversation.findOne({
                         type: 'private',
                         participants: { $all: [userId, receiverId] }
@@ -167,6 +202,7 @@ const setUpSocket = (server) => {
                         });
                         await conversation.save();
                     }
+
                     if (content) {
                         const message = new Message({
                             conversationId: conversation._id,
@@ -190,17 +226,83 @@ const setUpSocket = (server) => {
                         lastMessage: conversation.lastMessage || null,
                     }
                     console.log('Emitted Conversation:', enrichedConversation);
-                    socket.emit('conversation:created', enrichedConversation);
+                    [userId, receiverId].forEach(id => {
+                        io.to(id).emit('conversation:created', enrichedConversation);
+                    });
 
                 } catch (error) {
                     console.error('Error in create conversation handler:', error);
                     socket.emit('error', { message: error.message });
                 }
             });
+
+            socket.on('create:group-conversation', async (data) => {
+                try {
+                    if (!data.name || !data.participants || data.participants.length < 2) {
+                        throw new Error('Invalid group conversation data');
+                    }
+                    const conversation = new Conversation({
+                        type: 'group',
+                        name: data.name,
+                        participants: data.participants,
+                        creator: userId,
+                    })
+                    await conversation.save();
+
+                    await conversation.populate({
+                        path: 'participants',
+                        select: 'name avatar status lastActive'
+                    })
+
+                    const enrichedConversation = {
+                        _id: conversation._id.toString(),
+                        participants: conversation.participants,
+                        lastMessage: conversation.lastMessage || null,
+                        name: conversation.name,
+                        type: 'group',
+                    }
+                    console.log('Emitted Group Conversation:', enrichedConversation);
+                    data.participants.forEach(participantId => {
+                        io.to(participantId).emit('conversation:created', enrichedConversation);
+                    })
+                } catch (error) {
+                    console.error('Error in create group conversation handler:', error);
+                    socket.emit('error', { message: error.message });
+                }
+            })
+
             socket.on('get:conversations', async (userId) => {
                 try {
+                    const userIdString = userId.toString();
+
+                    const friendships = await Friendships.find({
+                        $or: [
+                            { requester: userId, status: 'accepted' },
+                            { recipient: userId, status: 'accepted' }
+                        ]
+                    });
+
+                    const friendIds = friendships.map(friendship =>
+                        friendship.requester.toString() === userId.toString()
+                            ? friendship.recipient
+                            : friendship.requester
+                    );
                     const conversations = await Conversation.find({
-                        participants: userId
+                        $or: [
+                            {
+                                type: 'private',
+                                participants: {
+                                    $all: [
+                                        new mongoose.Types.ObjectId(userIdString),
+                                        ...friendIds.map(id => new mongoose.Types.ObjectId(id.toString()))
+                                    ]
+                                }
+                            },
+                            {
+                                type: 'group',
+                                participants: new mongoose.Types.ObjectId(userIdString)
+                            }
+                        ]
                     })
                         .populate({
                             path: 'participants',
@@ -215,7 +317,24 @@ const setUpSocket = (server) => {
                         });
 
                     const enrichedConversations = conversations.map(conv => {
-                        const otherParticipant = conv.participants.find(p => p._id.toString() !== userId.toString());
+                        if (conv.type === 'group') {
+                            return {
+                                _id: conv._id.toString(),
+                                name: conv.name,
+                                avatarGroup: conv.avatarGroup,
+                                participants: conv.participants.map(p => ({
+                                    _id: p._id,
+                                    name: p.name,
+                                    avatar: p.avatar,
+                                    status: p.status,
+                                })),
+                                lastMessage: conv.lastMessage,
+                                type: conv.type,
+                                createdAt: conv.createdAt
+                            };
+                        }
+
+                        const otherParticipant = conv.participants.find(p => p._id.toString() !== userIdString);
                         return {
                             _id: conv._id.toString(),
                             otherParticipant: otherParticipant ? {
@@ -227,15 +346,93 @@ const setUpSocket = (server) => {
                             } : null,
                             lastMessage: conv.lastMessage,
                             type: conv.type,
+                            createdAt: conv.createdAt
                         };
+                    }).sort((a, b) => {
+                        if (!a.lastMessage) return 1;
+                        if (!b.lastMessage) return -1;
+                        return new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt);
                     });
-                    console.log('id conversation', enrichedConversations._id)
+
+                    console.log('Emitted Conversations:', enrichedConversations);
                     socket.emit('conversations:list', enrichedConversations);
                 } catch (error) {
                     console.error('Error in get conversations handler:', error);
                     socket.emit('error', { message: error.message });
                 }
             });
+
+            socket.on('update:conversation', async ({conversationId, lastMessage, type, attachments}) =>{
+                try {
+
+                    if (!lastMessage || !lastMessage.sender) {
+                        throw new Error('Invalid message data');
+                    }
+
+                    const existingMessage = await Message.findOne({ 
+                        conversationId, 
+                        content: lastMessage.content || '',
+                        sender: lastMessage.sender._id,
+                        sentAt: { $gte: new Date(Date.now() - 5000) } // Kiểm tra trong vòng 5 giây gần đây
+                    });
+            
+                    if (existingMessage) {
+                        console.log('Message already exists, skipping duplicate');
+                        return;
+                    }
+                    const newMessage = new Message({
+                        conversationId,
+                        sender: lastMessage.sender._id,
+                        content: lastMessage.content || '',
+                        type: type,
+                        attachments: attachments ? attachments.map(file => ({
+                            fileName: file.fileName,
+                            fileUrl: file.fileUrl,
+                            fileType: file.fileType,
+                            fileSize: file.fileSize
+                        })) : [],
+                        sentAt: new Date(),
+                        tempId: lastMessage.tempId, 
+                    })
+                    await newMessage.save();
+
+                    await newMessage.populate('sender', 'name avatar');
+
+                    const updatedConversation = await Conversation.findByIdAndUpdate(
+                        conversationId,
+                        {
+                            lastMessage: newMessage._id,
+                            updatedAt: new Date()
+                        },
+                        {new: true}
+                    ).populate({
+                        path: 'lastMessage',
+                        populate:{
+                            path: 'sender',
+                            select: 'name avatar'
+                        }
+                    }).lean();
+
+                    io.to(`conversation:${conversationId}`).emit('conversation:updated', {
+                        _id: updatedConversation._id,
+                        lastMessage: newMessage,
+                        type: type,
+                        attachments: attachments
+                    })
+
+                    if (attachments && attachments.length >0){
+                        attachments.forEach(file =>{
+                            io.to(`conversation:${conversationId}`).emit('files:added', {
+                                ...file,
+                                conversationId: conversationId,
+                                sender: newMessage.sender
+                            });
+                        })
+                    }
+                } catch (error) {
+                    console.log('Error in update conversation handler:', error);
+                }
+            })
             // Xử lý join room conversation
             socket.on('join:conversation', async (conversationId) => {
                 try {
@@ -293,9 +490,16 @@ const setUpSocket = (server) => {
             })
 
             // Xử lý tin nhắn
-            socket.on('send:message', async ({ conversationId, content }, callback) => {
+            socket.on('send:message', async ({ conversationId, content, type, attachments, tempId }, callback) => {
                 try {
-                    if (!conversationId || !content) {
+                    const existingMessage = await Message.findOne({ tempId });
+                    if (existingMessage) {
+                        if (callback) {
+                            callback(null, existingMessage);
+                        }
+                        return;
+                    }
+                    if (!conversationId || (!content && (!attachments || attachments.length === 0))) {
                         throw new Error('Invalid message data');
                     }
                     const conversation = await Conversation.findById(conversationId).populate('participants');
@@ -305,15 +509,21 @@ const setUpSocket = (server) => {
                     const isRecipientInRoom = recipientSocketInRoom.some(
                         s => s.user?._id?.toString() === recipientId?.toString()
                     )
-                    console.log('Recipient in room:', isRecipientInRoom);
+                    
                     const message = new Message({
                         conversationId,
                         sender: userId,
-                        content,
-                        type: 'text',
+                        content: content || '',
+                        type,
+                        attachments: attachments ? attachments.map(file => ({
+                            fileName: file.fileName,
+                            fileUrl: file.fileUrl,
+                            fileType: file.fileType,
+                            fileSize: file.fileSize
+                        })) : [],
                         status: isRecipientInRoom ? 'read' : (onlineUsers.has(recipientId) ? 'delivered' : 'sent'),
-                        // createdAt: new Date(),
                         sentAt: new Date(),
+                        tempId, 
                         readBy: isRecipientInRoom ? {
                             user: recipientId,
                             readAt: new Date()
@@ -352,7 +562,6 @@ const setUpSocket = (server) => {
                 }
             })
             socket.on('get:messages', async (conversationId, callback) => {
-                console.log('Received conversationId:', conversationId);
                 try {
                     const messages = await Message.find({ conversationId })
                         .populate('sender', 'name avatar')
@@ -509,106 +718,206 @@ const setUpSocket = (server) => {
                 }
             });
 
-            //Gui thong bao
-            socket.on('notification:send', async ({ userId, type, referenceId, content }) => {
+            socket.on('get:members', async (conversationId, callback) => {
                 try {
-                    const notification = await notificationService.createNotification({ userId, type, referenceId, content });
-                    io.to(`user:${userId}`).emit('notification:receive', notification);
-                    console.log(`Notification sent to user ${userId}`);
-                } catch (error) {
-                    console.log('Error in send notification handler:', error);
-                }
-            })
-
-            //Danh dau thong bao da doc
-            socket.on('notification:read', async ({ notificationId, userId }) => {
-                try {
-                    await notificationService.markNotificationAsRead(notificationId);
-                    io.to(`user:${userId}`).emit('notification:read', notificationId);
-                    console.log(`Notification ${notificationId} marked as read for user ${userId}`);
-                } catch (error) {
-
-                }
-            })
-            socket.on('friend:request', async ({ recipientId, requesterId, message }) => {
-                console.log('Friend request received on server:', {
-                    recipientId,
-                    requesterId,
-                    message
-                });
-                // const requesterId = socket.user._id;
-                const requestKey = `${requesterId}-${recipientId}`;
-
-                if (pendingRequests.has(requestKey)) {
-                    console.log('Duplicate request blocked');
-                    return socket.emit('error', { message: 'Friend request already sent and is pending' });
-                }
-
-                try {
-                    pendingRequests.set(requestKey, true);
-
-                    const existingRequest = await friendshipService.checkExistingRequest(requesterId, recipientId);
-                    if (existingRequest) {
-                        return socket.emit('error', { message: 'Friend request already sent and is pending' });
+                    const conversation = await Conversation.findById(conversationId)
+                        .populate('participants', 'name avatar status lastActive');
+                    if (!conversation) {
+                        throw new Error('Conversation not found');
                     }
-
-                    const friendship = await friendshipService.senderFriendRequest(requesterId, recipientId);
-                    const notification = await notificationService.createNotification({
-                        userId: recipientId,
-                        type: 'friend_request',
-                        referenceId: requesterId,
-                        content: `${socket.user.name} sent you a friend request`
-                    });
-                    console.log("Notification created:", notification);
-                    io.to(`user:${recipientId}`).emit('notification:receive', notification);
-                    console.log('Server: Emitting notification to specific room', {
-                        recipientRoom: `user:${recipientId}`,
-                        notificationId: notification._id,
-                        content: notification.content,
-                        socketRooms: Array.from(socket.rooms)
-                    });
-                    console.log(`Friend request sent from ${requesterId} to ${recipientId}`);
-                    console.log('Emitted notification data:', JSON.stringify(notification, null, 2));
+                    if (callback) {
+                        callback(conversation.participants);
+                    } else {
+                        socket.emit('members:list', conversation.participants);
+                    }
                 } catch (error) {
-                    console.error('Error in friend request handler:', error);
-                    socket.emit('error', {
-                        message: error.message,
-                        details: error.toString()
-                    });
-                } finally {
-                    pendingRequests.delete(requestKey);
+                    console.error('Error in get members handler:', error);
                 }
             });
 
-            // Chap nhan yeu cau ket ban
-            socket.on('friend:accept', async ({ friendshipId }) => {
+            socket.on('get:files', async (conversationId, callback) => {
                 try {
-                    const friendship = await friendshipService.acceptFriendRequest(friendshipId);
-                    const { requester, reciptient } = friendship;
-                    io.to(`user:${requester}`).emit('friend:accept', friendship);
-                    io.to(`user:${reciptient}`).emit('friend:accept', friendship);
+                    const files = await Message.find({
+                        conversationId,
+                        attachments: { $exists: true, $ne: [] }
+                    })
+                        .select('attachments sender')
+                        .populate('sender', 'name avatar')
+                        .lean();
+
+                    const allFiles = files.flatMap(msg =>
+                        msg.attachments.map(file => ({
+                            ...file,
+                            sender: {
+                                _id: msg.sender._id,
+                                name: msg.sender.name,
+                                avatar: msg.sender.avatar
+                            },
+                            messageId: msg._id
+                        }))
+                    )
+                    if (callback) {
+                        callback(allFiles);
+                    } else {
+                        socket.emit('files:list', allFiles);
+                    }
                 } catch (error) {
-                    socket.emit('error', { message: error.message });
+                    console.error('Error in get files handler:', error);
                 }
             })
-            //Tu coi yeu cau ket ban
-            socket.on('friend:reject', async ({ friendshipId }) => {
+            socket.on('sendFriendRequest', async (data) => {
+                const { requesterId, recipientId } = data;
+
                 try {
-                    const friendship = await friendshipService.rejectedFriendRequest(friendshipId);
-                    io.to(`user:${friendship.requester}`).emit('friend:reject', friendship);
+                    if (!requesterId || !recipientId) {
+                        return socket.emit('friendRequestError', {
+                            message: 'Invalid friend request data'
+                        })
+                    }
+                    const requesterUser = await Users.findById(requesterId);
+                    const recipientUser = await Users.findById(recipientId);
+
+                    if (!requesterUser || !recipientUser) {
+                        return socket.emit('friendRequestError', {
+                            message: 'User not found'
+                        });
+                    }
+
+                    const existingRequest = await Friendships.findOne({
+                        requester: requesterId,
+                        recipient: recipientId,
+                        status: 'pending'
+                    });
+
+                    if (existingRequest) {
+                        return socket.emit('friendRequestError', {
+                            message: 'Friend request already sent'
+                        })
+                    }
+
+                    const friendshipRequest = new Friendships({
+                        requester: requesterId,
+                        recipient: recipientId,
+                        status: 'pending'
+                    })
+                    await friendshipRequest.save();
+
+                    const notification = new Notifications({
+                        userId: recipientId,
+                        type: 'friend_request',
+                        referenceId: friendshipRequest._id,
+                        content: `${requesterUser.name} sent you a friend request`,
+                        isRead: false,
+                        sender: {
+                            _id: requesterId,
+                            name: requesterUser.name,
+                            avatar: requesterUser.avatar
+                        }
+                    })
+                    await notification.save();
+
+                    // Broadcast to all sockets of the recipient
+                    io.sockets.sockets.forEach((socket) => {
+                        if (socket.user?._id?.toString() === recipientId) {
+                            socket.emit('newFriendRequest', {
+                                notification: notification.toObject(),
+                            });
+                        }
+                    });
+
+                    // Send confirmation to the sender
+                    socket.emit('friendRequestSent', {
+                        notification: notification.toObject(),
+                    });
+
                 } catch (error) {
-                    console.log('Error in reject friend request handler:', error);
-                    socket.emit('error', { message: error.message });
+                    socket.emit('friendRequestError', {
+                        message: 'Error sending friend request'
+                    })
                 }
             })
-            // Xử lý disconnect
+
+            socket.on('respondToFriendRequest', async (data) => {
+                const { requestId, status, userId } = data;
+
+                try {
+                    if (!requestId || !status || !userId) {
+                        return socket.emit('friendRequestError', {
+                            message: 'Invalid request parameters'
+                        });
+                    }
+
+                    const friendship = await Friendships.findByIdAndUpdate(
+                        requestId,
+                        { status },
+                        { new: true }
+                    )
+                    if (!friendship) {
+                        return socket.emit('friendRequestError', {
+                            message: 'Friend request not found'
+                        });
+                    }
+
+                    if (status === 'accepted') {
+                        const notification = new Notifications({
+                            userId: friendship.requester,
+                            type: 'friend_request_accepted',
+                            referenceId: requestId,
+                            content: `${socket.user?.name} accepted your friend request`
+                        })
+                        await notification.save();
+
+                        io.to(friendship.requester).emit('friendRequestAccepted', {
+                            requestId,
+                            recipient: userId,
+                        })
+
+                    } else if (status === 'rejected') {
+
+                        const notification = new Notifications({
+                            userId: friendship.requester,
+                            type: 'friend_request_rejected',
+                            referenceId: requestId,
+                            content: `${socket.user?.name} rejected your friend request`
+                        })
+
+                        await notification.save();
+
+                        io.to(friendship.requester).emit('friendRequestRejected', {
+                            requestId,
+                            recipient: userId,
+                        })
+                    }
+                } catch (error) {
+                    socket.emit('friendRequestError', {
+                        message: 'Error responding to friend request'
+                    })
+                }
+            })
+
+            socket.on('markNotificationsAsRead', async (data) => {
+                const { userId, notificationIds } = data;
+                try {
+                    await Notifications.updateMany(
+                        {
+                            _id: { $in: notificationIds },
+                            userId: userId
+                        },
+                        { $set: { isRead: true } }
+                    );
+                } catch (error) {
+                    console.error('Error marking notifications as read', error);
+                }
+            });
+
             socket.on('disconnect', async () => {
                 try {
                     const newCount = (onlineUsers.get(userId) || 0) - 1;
 
                     if (newCount <= 0) {
                         // Cập nhật trạng thái offline khi không còn connection nào
-                        await User.findByIdAndUpdate(userId,
+                        await User.findByIdAndUpdate(
+                            userId,
                             {
                                 status: 'offline',
                                 lastActive: new Date()

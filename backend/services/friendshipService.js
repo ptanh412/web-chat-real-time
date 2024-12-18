@@ -87,15 +87,22 @@ const getFriendRequests = async (userId, status = 'pending') => {
 }
 
 const getallFriends = async (userId) => {
-    return await Friendships.find({
+    const friendship =  await Friendships.find({
         $or: [
             { requester: userId, status: 'accepted' },
             { recipient: userId, status: 'accepted' },
         ],
-    })
-        .populate('requester', 'name avatar')
-        .populate('recipient', 'name avatar')
-        .sort({ updatedAt: -1 });
+    });
+    const friendIds = friendship.map(friendship => {
+        return friendship.requester.toString() == userId.toString()
+            ? friendship.recipient
+            : friendship.requester;
+    });
+    const friends = await Users.find({
+        _id: { $in: friendIds },
+    }).select('name avatar status');
+    return friends;
+
 }
 const getUnfriend = async (userId) => {
     const friendships = await Friendships.find({

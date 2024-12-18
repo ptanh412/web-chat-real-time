@@ -13,15 +13,26 @@ const messageSchema = new mongoose.Schema({
     },
     content: {
         type: String,
-        required: true,
+        default: '',
+        // Loại bỏ required: true
+        validate: {
+            validator: function(value) {
+                // Kiểm tra nếu không có attachments thì content phải có nội dung
+                return this.attachments && this.attachments.length > 0 || (value && value.trim() !== '');
+            },
+            message: 'Message must have content or attachments'
+        }
     },
     type: {
         type: String,
         required: true,
-        enum: ['text', 'image', 'video', 'audio', 'file'],
-        default: 'text',
+        enum: ['text', 'multimedia'],
+        // Tự động xác định loại tin nhắn dựa trên nội dung
+        default: function() {
+            return this.attachments && this.attachments.length > 0 ? 'multimedia' : 'text';
+        }
     },
-    status:{
+    status: {
         type: String,
         enum: ['sent', 'delivered', 'read'],
         default: 'sent',
@@ -33,15 +44,18 @@ const messageSchema = new mongoose.Schema({
     deliveredAt: {
         type: Date,
     },
-    attachments:[{
-        url: String,
-        type: String,
-        name: String,
-        size: Number,
-        mimeType: String,
+    attachments: [{
+        fileName: String,
+        fileUrl: String,
+        fileType: {
+            type: String,
+            enum: ['image', 'video', 'pdf', 'document', 'spreadsheet', 'presentation', 'archive', 'raw', 'other'],
+            default: 'other'
+        },
+        fileSize: Number,
     }],
     readBy: {
-        user:{
+        user: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Users',
         },
@@ -57,6 +71,25 @@ const messageSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    tempId:{
+        type: String,
+        unique: true,
+        sparse: true
+    }
+}, {
+    // Thêm tùy chọn để cho phép custom validation
+    strict: true,
+    // Tự động cập nhật updatedAt
+    timestamps: { updatedAt: 'updatedAt' }
+});
+
+// Pre-save hook để kiểm tra điều kiện
+messageSchema.pre('save', function(next) {
+    // Nếu không có nội dung và không có file đính kèm
+    if ((!this.content || this.content.trim() === '') && (!this.attachments || this.attachments.length === 0)) {
+        return next(new Error('Message must have content or attachments'));
+    }
+    next();
 });
 
 module.exports = mongoose.model('Messages', messageSchema);

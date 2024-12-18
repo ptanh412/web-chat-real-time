@@ -6,7 +6,7 @@ const socketAuth = async (socket, next) => {
     try {
         const token = socket.handshake.auth?.token ||
                       socket.handshake.query?.token;
-        console.log(token);
+        console.log('Token received',token);
         if (!token) {
             return next(new Error('Token is required'));
         }

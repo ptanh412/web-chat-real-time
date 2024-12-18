@@ -37,41 +37,93 @@ const ChatPage = () => {
 
     socket.emit('get:conversations');
     socket.on('conversations:list', (conversationsList) => {
-      setConversations(conversationsList);
+      setConversations(conversationsList || []);
+    });
+
+    socket.on('user:online', (user) => {
+      setConversations((prevConversations = []) => {
+        // Ensure prevConversations is an array
+        const safeConversations = prevConversations || [];
+
+        return safeConversations.map((conv) => {
+          // Add a null check for participants
+          if (conv.participants && conv.participants.some(p => p._id === user._id)) {
+            return {
+              ...conv,
+              participants: (conv.participants || []).map(participant =>
+                participant._id === user._id
+                  ? {
+                    ...participant,
+                    status: user.status,
+                    lastActive: user.lastActive,
+                    avatar: user.avatar,
+                    name: user.name
+                  }
+                  : participant
+              )
+            }
+          }
+          return conv;
+        })
+      });
+
+      setSelectedConversation((prevConversation) => {
+        // Add multiple null checks
+        if (prevConversation &&
+          prevConversation.participants &&
+          Array.isArray(prevConversation.participants) &&
+          prevConversation.participants.some(p => p._id === user._id)) {
+          return {
+            ...prevConversation,
+            participants: (prevConversation.participants || []).map(participant =>
+              participant._id === user._id
+                ? {
+                  ...participant,
+                  status: user.status,
+                  lastActive: user.lastActive,
+                  avatar: user.avatar,
+                  name: user.name
+                }
+                : participant
+            )
+          }
+        }
+        return prevConversation;
+      });
     });
 
     socket.on('conversation:created', (conversation) => {
-      console.log('New conversation:', conversation);
       setSelectedConversation(prev => ({
         ...conversation,
         _id: conversation._id || (prev ? prev._id : null),
       }));
-      setConversations((prevConversations) => {
-        // Avoid duplicates
-        const exists = prevConversations.some(conv => conv._id === conversation._id);
+
+      setConversations((prevConversations = []) => {
+        const safeConversations = prevConversations || [];
+        const exists = safeConversations.some(conv => conv._id === conversation._id);
         return exists
-          ? prevConversations
-          : [...prevConversations, conversation];
+          ? safeConversations
+          : [...safeConversations, conversation];
       });
-    })
+    });
 
     return () => {
       socket.off('conversation:created');
       socket.off('conversations:list');
+      socket.off('user:online');
     }
   }, [socket]);
-  useEffect(() => {
-    console.log('Selected Conversation (Full):', selectedConversation);
-    console.log('Selected Conversation ID:', selectedConversation?._id);
-  }, [selectedConversation]);
 
   const handleMessageClick = (conversation) => {
     if (socket && conversation._id) {
+      const updatedConversation = {
+        ...conversation,
+        participants: conversation.participants || []
+      };
       socket.emit('message:read', conversation._id);
-      setSelectedConversation(conversation);
+      setSelectedConversation(updatedConversation);
     }
   }
-  console.log(selectedConversation)
   return (
     <>
       {alertMessage && (
@@ -82,16 +134,20 @@ const ChatPage = () => {
           </span>
         </div>
       )}
-      <div className="flex h-screen">
-        <div className=" w-24 shadow-2xl">
+      <div className="flex h-screen overflow-hidden">
+        <div className=" w-24 shadow-2xl fixed h-full z-50">
           <Sidebar />
         </div>
-        <div className="w-full flex justify-between h-screen">
-          <div className="flex-1 flex flex-col">
-            <ConvesationList className="flex-1" setSelectedConversation={setSelectedConversation} onMessageClick={handleMessageClick} />
+        <div className="ml-24 w-[calc(100%-6rem)] flex fixed h-full p-5 justify-between space-x-3">
+          <div className="flex-1 flex flex-col rounded-2xl shadow-xl h-full">
+            <ConvesationList
+              className="flex-1"
+              setSelectedConversation={setSelectedConversation}
+              onMessageClick={handleMessageClick}
+            />
           </div>
 
-          <div className=" flex-[2] flex flex-col">
+          <div className=" flex-[2] flex flex-col h-full rounded-2xl shadow-xl">
             {selectedConversation && (
               <ChatWindow
                 conversation={selectedConversation}
@@ -100,13 +156,16 @@ const ChatPage = () => {
             )}
           </div>
 
-          <div className="flex-1 flex flex-col">
-            <div className="bg-blue-200 flex-1">
-              <Directory />
+          <div className="flex-1 flex flex-col rounded-2xl shadow-xl">
+            <div className="flex-1">
+              <Directory
+                selectedConversation={selectedConversation}
+                socket={socket}
+              />
             </div>
-            <div className="bg-green-200 flex-1">
+            {/* <div className="flex-1">
               <Files />
-            </div>
+            </div> */}
           </div>
         </div>
       </div>
