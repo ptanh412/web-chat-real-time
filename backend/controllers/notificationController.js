@@ -19,10 +19,10 @@ const createNotification = async (req, res) => {
 
 const getNotifications = async (req, res) => {
     try {
-        const {isRead} = req.query;
+        // const {isRead} = req.query;
         const notifications = await notificationService.getNotificationsByUserId(
-            req.user._id,
-            isRead !== undefined ? isRead === 'true': 'false'
+            req.user._id
+            // isRead !== undefined ? isRead === 'true': 'false'
         );
         res.status(200).json({
             notifications,

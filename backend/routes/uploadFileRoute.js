@@ -32,79 +32,78 @@ const getAllowedFormats = (mimeType) => {
 const getResourceType = (mimeType) => {
     const mimeTypeLower = mimeType.toLowerCase();
 
-    console.log('Determining resource type for:', {
-        mimeType,
-        includes: {
-            image: mimeTypeLower.includes('image'),
-            video: mimeTypeLower.includes('video'),
-            pdf: mimeTypeLower.includes('pdf'),
-            word: mimeTypeLower.includes('word'),
-            excel: mimeTypeLower.includes('excel'),
-            powerpoint: mimeTypeLower.includes('powerpoint'),
-            zip: mimeTypeLower.includes('zip')
+    const mimeTypeMap = {
+        'image':{
+            matches: ['image/'],
+            cloudinaryType: 'image'
+        },
+        'video': {
+            matches: ['video/'],
+            cloudinaryType: 'video'
+        },
+        'pdf': {
+            matches: ['application/pdf'],
+            cloudinaryType: 'raw'
+        },
+        'document': {
+            matches: [
+                'application/msword', 
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+            cloudinaryType: 'raw'
+        },
+        'spreadsheet': {
+            matches: [
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+            cloudinaryType: 'raw'
+        },
+        'presentation': {
+            matches: [
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+            cloudinaryType: 'raw'
+        },	
+        'archive': {
+            matches: [
+                'application/zip',
+                'application/x-rar-compressed',
+            ],
+            cloudinaryType: 'raw'
         }
-    })
-
-    if (mimeTypeLower.includes('image')) {
-        return 'image';
+    };
+    
+    for (const [fileType, config] of Object.entries(mimeTypeMap)){
+        if (config.matches.some(match => mimeTypeLower.includes(match))) {
+            return {
+                fileType: fileType,
+                cloudinaryType: config.cloudinaryType
+            };
+        }
     }
-    if (mimeTypeLower.includes('video')) {
-        return 'video';
-    }
-    if (mimeTypeLower.includes('pdf')) {
-        return 'raw';
-    }
-    if (mimeTypeLower.includes('word')) {
-        return 'raw';
-    }
-    if (mimeTypeLower.includes('excel') || mimeTypeLower.includes('spreadsheetml')) {
-        return 'raw';  // Trả về 'raw' cho file Excel
-    }
-    if (mimeTypeLower.includes('powerpoint') || mimeTypeLower.includes('presentationml')) {
-        return 'raw';
-    }
-    if (mimeTypeLower.includes('zip')) {
-        return 'raw';
-    }
-    return 'other';
+    return{
+        fileType: 'other',
+        cloudinaryType: 'raw'
+    };
 }
 
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
         try {
-            const fileFormat = getAllowedFormats(file.mimetype);
-            const resourceType = getResourceType(file.mimetype);
+            // const fileFormat = getAllowedFormats(file.mimetype);
+            const {fileType, cloudinaryType} = getResourceType(file.mimetype);
 
-            if (!fileFormat) {
-                throw new Error(`File type ${file.mimetype} not supported`);
-            }
-            const sanitizeFileName = (name) => {
-                // Decode potential encoding issues
-                const decodedName = decodeURIComponent(name);
-                
-                // Remove or replace problematic characters
-                const cleanedName = decodedName
-                    .normalize('NFC')  // Normalize unicode characters
-                    .replace(/[^\w\s.-]/g, '_')  // Replace non-word characters
-                    .replace(/\s+/g, '_')  // Replace spaces with underscores
-                    .replace(/_+/g, '_')  // Remove multiple consecutive underscores
-                    .trim();
-                
-                // Ensure only one file extension
-                const extension = path.extname(cleanedName);
-                const baseNameWithoutExt = path.basename(cleanedName, extension);
-                
-                return `${baseNameWithoutExt}${extension}`;
-            };
+            // if (!fileFormat) {
+            //     throw new Error(`File type ${file.mimetype} not supported`);
+            // }
 
-            const originalFileName = sanitizeFileName(file.originalname);
+            const originalFileName = file.originalname;
 
             const params = {
                 folder: 'Chat',
-                resource_type: resourceType,
+                resource_type: cloudinaryType,
                 public_id: `${Date.now()}_${originalFileName}`,
-                filename: originalFileName
+                filename: originalFileName,
             };
             
             return params;
@@ -151,11 +150,11 @@ router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ error: 'No files uploaded' });
         }
-        console.log('Uploaded Files Details:', req.files.map(file => ({
-            originalname: file.originalname,
-            mimetype: file.mimetype,
-            encoding: file.encoding
-        })));
+        // console.log('Uploaded Files Details:', req.files.map(file => ({
+        //     originalname: file.originalname,
+        //     mimetype: file.mimetype,
+        //     encoding: file.encoding
+        // })));
 
         const uploadResults = await Promise.all(req.files.map(async (file) => {
             try {
@@ -163,14 +162,14 @@ router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
                     console.error('No Cloudinary URL found for file:', file.originalname);
                     return null;
                 }
-
+                const {fileType} = getResourceType(file.mimetype);
                 return {
-                    fileName: file.originalname, // Preserve original filename
+                    fileName: file.originalname, 
                     fileUrl: file.path,
-                    fileType: getResourceType(file.mimetype),
+                    fileType: fileType,
                     fileSize: file.size,
                     mimetype: file.mimetype,
-                    originalName: file.originalname // Add this line
+                    originalName: file.originalname 
                 };
             } catch (fileError) {
                 console.error(`Error processing file ${file.originalname}:`, fileError);
@@ -196,7 +195,22 @@ router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
         });
     }
 });
+router.post('/upload-avatar', uploadCloud.single('file'), async (req, res) =>{
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
 
+        res.status(200).json({
+            fileUrl: req.file.path,
+            message: 'File uploaded successfully'
+        })
+            
+    } catch (error) {
+        console.error('Upload Error:', error);
+        res.status(500).json({error: 'Failed to upload file'});
+    }
+})
 router.use((err, req, res, next) => {
     console.error('Global Error Handler:', err);
     res.status(500).json({

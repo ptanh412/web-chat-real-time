@@ -1,13 +1,20 @@
-import React, { lazy, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { GoDotFill } from "react-icons/go";
 import img1 from "../assets/avatars/1920x1080_px_architecture_Hotels_Marina_Bay_reflection_Singapore-1199381.jpg";
 import { IoIosSend } from "react-icons/io";
 import { MdAttachFile } from "react-icons/md";
 import { useUser } from "../context/UserContext";
 import { IoIosCheckmark } from "react-icons/io";
+import { FaReply, FaTrash } from 'react-icons/fa';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, Button } from "../components/ui/dialog.js";
 import axios from "axios";
 import { MdClose } from "react-icons/md";
 import { AlertContext } from "../context/AlertMessage";
+import MessageReactions from "./MessageReaction";
+import { MdOutlineEmojiEmotions } from "react-icons/md";
+import { motion, AnimatePresence } from 'framer-motion';
+import { FaImage, FaVideo, FaFilePdf, FaFileWord, FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFile, FaDownload } from "react-icons/fa";
+
 
 const FilePreviewItem = ({ file, onRemove, uploadProgress }) => {
     console.log(file);
@@ -54,11 +61,21 @@ const FilePreviewItem = ({ file, onRemove, uploadProgress }) => {
         </div>
     )
 }
+const REACTIONS = [
+    { emoji: '❤️', name: 'heart' },
+    { emoji: '👍', name: 'like' },
+    { emoji: '😮', name: 'wow' },
+    { emoji: '😠', name: 'angry' },
+    { emoji: '😢', name: 'cry' }
+];
 const ChatWindow = ({ conversation, currentUser }) => {
     const { socket } = useUser();
     const { showAlert } = useContext(AlertContext);
     const messagesEndRef = useRef(null);
     const [messages, setMessages] = useState([]);
+    const [replyingTo, setReplyingTo] = useState(null);
+    const [recallDialogOpen, setRecallDialogOpen] = useState(false);
+    const [messageToReCall, setMessageToReCall] = useState(null);
     const [newMessage, setNewMessage] = useState('');
     const [previews, setPreviews] = useState([]);
     const [otherParticipant, setOtherParticipant] = useState(null);
@@ -69,18 +86,42 @@ const ChatWindow = ({ conversation, currentUser }) => {
         subtitleColor: 'gray'
     });
     const [uploadProgress, setUploadProgress] = useState({});
+    const [showReactions, setShowReactions] = useState(false);
+    const [activeMessageId, setActiveMessageId] = useState(null);
     const fileInputRef = useRef(null);
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-    useEffect(scrollToBottom, [messages]);
+    const popoverRef = useRef(null);
 
+    useEffect(scrollToBottom, [messages]);
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (popoverRef.current && !popoverRef.current.contains(event.target)) {
+                setShowReactions(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleEmojiClick = (messageId) => {
+        setActiveMessageId(messageId);
+        setShowReactions(!showReactions);
+    };
+
+    const handleReact = (emoji, messageId) => {
+        handleReaction(messageId, emoji);
+        setShowReactions(false);
+        setActiveMessageId(null);
+    };
     useEffect(() => {
         if (conversation.type === 'private') {
-            // Use otherParticipant directly for private conversations
             const otherParticipant = conversation.otherParticipant;
 
             if (otherParticipant) {
+                setOtherParticipant(otherParticipant);
                 setConversationHeader({
                     title: otherParticipant.name || 'Unknown Contact',
                     subtitle: otherParticipant.status === 'online'
@@ -98,9 +139,9 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 subtitleColor: 'gray'
             });
         }
-    }, [conversation, currentUser]);
+    }, [conversation]);
 
-    const handleUserStatusChange = (user) => {
+    const handleUserStatusChange = useCallback((user) => {
         if (conversation?.participants?.some(p => p._id === user._id)) {
             setOtherParticipant(prev => {
                 if (!prev) return null;
@@ -112,12 +153,21 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     avatar: user.avatar,
                 };
             });
+
+            if (conversation.type === 'private' && conversation.otherParticipant._id === user._id) {
+                setConversationHeader(prev => ({
+                    ...prev,
+                    subtitle: user.status === 'online'
+                        ? 'Online'
+                        : `Active ${fomatLastActive(user.lastActive, user.status)}`,
+                    subtitleColor: user.status === 'online' ? 'green' : 'gray'
+                }));
+            }
         }
-    };
+    }, [conversation]);
 
     useEffect(() => {
         if (!socket) return;
-
         socket.on('user:online', handleUserStatusChange);
         socket.on('user:offline', handleUserStatusChange);
 
@@ -125,7 +175,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.off('user:online', handleUserStatusChange);
             socket.off('user:offline', handleUserStatusChange);
         };
-    }, [socket, conversation]);
+    }, [socket, handleUserStatusChange, conversation?._id]); // Thêm conversation?._id
 
     useEffect(() => {
         setMessages([]);
@@ -139,11 +189,6 @@ const ChatWindow = ({ conversation, currentUser }) => {
 
     useEffect(() => {
         if (!socket || !conversation) return;
-
-        if (!conversation || !conversation._id) {
-            console.log('No valid conversation:', conversation);
-            return;
-        }
 
         const conversationId = conversation._id.toString();
 
@@ -172,6 +217,8 @@ const ChatWindow = ({ conversation, currentUser }) => {
             }
         });
 
+        socket.on('user:online', handleUserStatusChange);
+
         socket.on('message:status-updated', (updatedMessage) => {
             setMessages(prevMessages =>
                 prevMessages.map(msg =>
@@ -187,9 +234,38 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.off('messages:list');
             socket.off('message:status-updated');
             socket.emit('leave:conversation', conversationId);
+            socket.off('user:online', handleUserStatusChange);
         }
-    }, [socket, conversation?._id, currentUser]);
+    }, [socket, conversation?._id, currentUser, handleUserStatusChange]);
+
     useEffect(() => {
+        if (!socket) return;
+
+        socket.on('message:reaction-updated', ({ messageId, reactions }) => {
+            setMessages(prevMessages =>
+                prevMessages.map(msg => {
+                    if (msg._id === messageId) {
+                        return { ...msg, reactions }; // Sử dụng hoàn toàn dữ liệu từ server
+                    }
+                    return msg;
+                })
+            );
+        });
+
+        return () => {
+            socket.off('message:reaction-updated');
+        };
+    }, [socket]);
+    const handleReaction = (messageId, emoji) => {
+        if (!socket) return;
+        socket.emit('message:react', { messageId, emoji });
+    }
+    const handleRemoveReaction = (emoji, messageId) => {
+        if (!socket) return;
+        socket.emit('message:remove-reaction', { messageId, emoji });
+    }
+    useEffect(() => {
+        if (!socket || !conversation?._id) return;
         const unreadMessages = messages
             .filter(msg => msg.sender._id !== currentUser._id && msg.status !== 'read')
             .map(msg => msg._id);
@@ -198,6 +274,24 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.emit('message:read', conversation._id);
         }
     }, [messages, conversation?._id, currentUser._id]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        socket.on('message:recalled', ({ messageId, recallType, message }) => {
+            setMessages(prevMessages =>
+                prevMessages.map(msg =>
+                    msg._id === messageId
+                        ? { ...msg, isRecalled: true, recallType }
+                        : msg
+                )
+            );
+        });
+
+        return () => {
+            socket.off('message:recalled');
+        };
+    }, [socket]);
 
     useEffect(() => {
         if (!socket || !conversation?._id) return;
@@ -308,7 +402,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
         if (newMessage.trim() !== '') return 'text';
         return '';
     }, [previews, newMessage]);
-    
+
     const sendMessage = async (e) => {
         e?.preventDefault();
         if (!socket) return;
@@ -317,7 +411,6 @@ const ChatWindow = ({ conversation, currentUser }) => {
             console.error('No content to send');
             return;
         }
-
 
         let uploadFiles = [];
 
@@ -343,15 +436,16 @@ const ChatWindow = ({ conversation, currentUser }) => {
             tempId: Date.now().toString(),
             conversationId: conversation._id,
             status: 'sending',
+            createdAt: new Date()
         }
-
-        // setMessages(prevMessages => [...prevMessages, messageToSend]);  
-
         if (uploadFiles.length > 0) {
-            socket.emit('files:added', {
-                ...uploadFiles[0],
-                conversationId: conversation._id,
-                sender: currentUser,
+            uploadFiles.forEach(file => {
+                socket.emit('files:added', {
+                    ...file,
+                    conversationId: conversation._id,
+                    sender: currentUser,
+                    createdAt: new Date().toISOString()
+                });
             })
         }
 
@@ -373,6 +467,13 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 type: messageType,
                 attachments: uploadFiles,
                 tempId: messageToSend.tempId,
+                sender: {
+                    _id: currentUser._id,
+                    name: currentUser.name,
+                    avatar: currentUser.avatar
+                },
+                replyTo: replyingTo?._id,
+                createdAt: new Date()
             }, (error, serverMessage) => {
                 if (error) {
                     setMessages(prevMessages =>
@@ -381,15 +482,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     showAlert('Message send failed', 'error');
                     return;
                 }
-                socket.emit('update:conversation', {
-                    conversationId: conversation._id,
-                    lastMessage: {
-                        ...serverMessage,
-                        tempId: messageToSend.tempId,
-                    },
-                    type: messageType,
-                    attachments: uploadFiles,
-                })
+
                 setMessages((prevMessages) =>
                     prevMessages.map((msg) =>
                         msg.tempId === messageToSend.tempId ? serverMessage : msg
@@ -398,6 +491,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             }
             );
         }
+        setReplyingTo(null);
         setPreviews([]);
         setUploadProgress({});
         setNewMessage('');
@@ -407,11 +501,299 @@ const ChatWindow = ({ conversation, currentUser }) => {
             fileInputRef.current.value = '';
         }
     };
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleMessageUpdate = (updatedMessage) => {
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg._id === updatedMessage._id ? updatedMessage : msg
+                )
+            )
+        }
+
+        const handleMessageRecall = ({ messageId, recallType, message, sender }) => {
+            setMessages(prev =>
+                prev.map(msg => {
+                    if (msg._id === messageId) {
+                        let updatedContent;
+                        if (recallType === 'everyone') {
+                            updatedContent = sender._id === currentUser._id
+                                ? 'You have recalled a message'
+                                : `${sender.name} has recalled a message`
+                        } else if (recallType === 'self') {
+                            updatedContent = sender._id === currentUser._id
+                                ? 'You have recalled a message'
+                                : msg.content;
+                        }
+                        return {
+                            ...msg,
+                            ...message,
+                            isRecalled: true,
+                            recallType,
+                            content: updatedContent,
+                            attachments: [],
+                            sender: {
+                                ...sender,
+                                _id: sender._id,
+                                name: sender.name,
+                                avatar: sender.avatar,
+                                status: sender.status,
+                                lastActive: sender.lastActive
+                            }
+                        };
+                    }
+                    return msg;
+                })
+            )
+        }
+        const handleMessageReply = (newMessage) => {
+            if (newMessage.conversationId === conversation._id) {
+                setMessages(prev => {
+                    const messageExist = prev.some(msg => msg._id === newMessage._id);
+                    if (messageExist) {
+                        return prev.map(msg =>
+                            msg._id === newMessage._id ? newMessage : msg
+                        );
+                    }
+                    return [...prev, newMessage];
+                })
+            }
+        }
+        socket.on('message:updated', handleMessageUpdate);
+        socket.on('message:recalled', handleMessageRecall);
+        socket.on('message:reply', handleMessageReply);
+
+        return () => {
+            socket.off('message:updated', handleMessageUpdate);
+            socket.off('message:recalled', handleMessageRecall);
+            socket.off('message:reply', handleMessageReply);
+        }
+    }, [socket, conversation?._id]);
+    const handleReply = (message) => {
+        setReplyingTo(message);
+    }
+
+    const cancelReply = () => {
+        setReplyingTo(null);
+    }
+
+    const handleRecall = (message) => {
+        setMessageToReCall(message);
+        setRecallDialogOpen(true);
+    }
+
+    const confirmRecall = async (recallType) => {
+        if (!socket || !messageToReCall) return;
+
+        setMessages(prev =>
+            prev.map(msg => {
+                if (msg._id === messageToReCall._id) {
+                    const updatedContent = recallType === 'everyone'
+                        ? 'You have recalled a message'
+                        : 'You have recalled a message';
+                    return {
+                        ...msg,
+                        isRecalled: true,
+                        recallType,
+                        content: updatedContent,
+                        attachments: []
+                    };
+                }
+                return msg;
+            }
+            )
+        )
+        socket.emit('message:recall', {
+            messageId: messageToReCall._id,
+            recallType,
+            conversationId: conversation._id,
+            sender: {
+                _id: currentUser._id,
+                name: currentUser.name,
+                avatar: currentUser.avatar,
+                status: currentUser.status,
+                lastActive: currentUser.lastActive
+            },
+            content: messageToReCall.content,
+        }, (error) => {
+            if (error) {
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg._id === messageToReCall._id
+                            ? { ...msg, isRecalled: false }
+                            : msg
+                    )
+                )
+                showAlert('Recall failed', 'error');
+            }
+        })
+        setRecallDialogOpen(false);
+        setMessageToReCall(null);
+    }
+
+    const renderReplyPreview = (message) => {
+        if (!message.replyTo) return null;
+        const repliedMessage = messages.find(msg => msg._id === message.replyTo);
+
+        if (!repliedMessage) return null;
+
+        return (
+            <div className="bg-gray-100 p-2 rounded-t-lg text-sm text-gray-600 border-l-2 border-blue-500">
+                <div className="font-semibold">{repliedMessage.sender.name}</div>
+                <div className="truncate">{repliedMessage.content}</div>
+            </div>
+        )
+    }
+    const getFileIcon = (fileType) => {
+        const iconMap = {
+            'image': <div className="bg-blue-500 text-white p-3 rounded-lg"><FaImage className="text-3xl" /></div>,
+            'video': <div className="bg-green-500 text-white p-3 rounded-lg"><FaVideo className="text-3xl" /></div>,
+            'pdf': <div className="bg-red-500 text-white p-2 rounded-full"><FaFilePdf className="text-" /></div>,
+            'document': <div className="bg-blue-400 text-white p-3 rounded-lg"><FaFileWord className="text-3xl" /></div>,
+            'spreadsheet': <div className="bg-green-600 text-white p-3 rounded-lg"><FaFileExcel className="text-3xl" /></div>,
+            'presentation': <div className="bg-orange-500 text-white p-3 rounded-lg"><FaFilePowerpoint className="text-3xl" /></div>,
+            'archive': <div className="bg-gray-500 text-white p-3 rounded-lg"><FaFileArchive className="text-3xl" /></div>,
+            'other': <div className="bg-gray-400 text-white p-3 rounded-lg"><FaFile className="text-3xl" /></div>
+        };
+        return iconMap[fileType] || iconMap.other;
+    };
+    
+    const renderMessage = (msg, index) => {
+        const isOwnMessage = msg.sender._id === currentUser._id;
+        return (
+            <div
+                key={msg._id || index}
+                className={`flex items-start ${isOwnMessage ? 'justify-end' : 'justify-start'} mb-4`}
+            >
+                <div className="flex flex-col max-w-[70%] group relative" ref={popoverRef}>
+                    {conversation.type === 'group' && !isOwnMessage && (
+                        <div className="text-[10px] text-gray-500 mb-1 ml-11">
+                            {msg.sender.name}
+                        </div>
+                    )}
+
+                    <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity
+                        ${isOwnMessage ? 'right-full mr-2' : 'left-full ml-2'} 
+                        flex items-center space-x-2 bg-white rounded-lg shadow p-1`}>
+                        <button
+                            onClick={() => handleEmojiClick(msg._id)}
+                            className="p-1.5 rounded-full hover:bg-gray-100"
+                        >
+                            <MdOutlineEmojiEmotions className="w-3 h-3 text-gray-500" />
+                        </button>
+                        <button
+                            onClick={() => handleReply(msg)}
+                            className="p-1.5 rounded-full hover:bg-gray-100"
+                        >
+                            <FaReply className="w-3 h-3 text-gray-500" />
+                        </button>
+                        {isOwnMessage && !msg.isRecalled && (
+                            <button
+                                onClick={() => handleRecall(msg)}
+                                className="p-1.5 rounded-full hover:bg-gray-100"
+                            >
+                                <FaTrash className="w-3 h-3 text-gray-500" />
+                            </button>
+                        )}
+                    </div>
+
+                    <div className={`group flex ${isOwnMessage ? 'justify-end' : 'justify-start'} items-start relative`}>
+                        {!isOwnMessage && (
+                            <img
+                                src={msg.sender.avatar}
+                                alt={msg.sender.name}
+                                className="rounded-full w-8 h-8 mr-3"
+                            />
+                        )}
+
+                        <div className="flex flex-col relative">
+                            {renderReplyPreview(msg)}
+
+                            <div className={`p-3 rounded-lg ${msg.isRecalled
+                                ? 'bg-gray-200'
+                                : isOwnMessage
+                                    ? (msg.type === 'text' ? 'bg-blue-500 text-white' : '')
+                                    : 'bg-gray-200'
+                                }`}>
+                                {msg.isRecalled ? (
+                                    msg.recallType === 'everyone' ? (
+                                        isOwnMessage ? (
+                                            <span className="text-gray-500 italic">You have recalled</span>
+                                        ) : (
+                                            <span className="text-gray-500 italic">{msg.sender.name} has recalled</span>
+                                        )
+                                    ) : msg.recallType === 'self' && isOwnMessage ? (
+                                        <span className="text-gray-500 italic">You have recalled</span>
+                                    ) : (
+                                        renderMessageContent(msg) // Hiển thị tin nhắn gốc cho người nhận
+                                    )
+                                ) : (
+                                    renderMessageContent(msg) // Hiển thị tin nhắn gốc nếu chưa thu hồi
+                                )}
+                            </div>
+
+                            {/* Emoji Reaction Popup */}
+                            <AnimatePresence>
+                                {showReactions && activeMessageId === msg._id && (
+                                    <motion.div
+                                        initial={{ scale: 0.8, opacity: 0 }}
+                                        animate={{ scale: 1, opacity: 1 }}
+                                        exit={{ scale: 0.8, opacity: 0 }}
+                                        className="absolute bottom-full mb-1 bg-white rounded-lg shadow-lg p-2 border flex space-x-2 z-[9999]"
+                                        style={{
+                                            left: isOwnMessage ? 'auto' : '0',
+                                            right: isOwnMessage ? '0' : 'auto',
+                                        }}
+                                    >
+                                        {REACTIONS.map(({ emoji, name }) => (
+                                            <button
+                                                key={name}
+                                                onClick={() => handleReact(emoji, msg._id)}
+                                                className="hover:bg-gray-100 p-1 rounded-full transition-colors"
+                                                title={name}
+                                            >
+                                                <span className="text-lg">{emoji}</span>
+                                            </button>
+                                        ))}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+
+                        {isOwnMessage && (
+                            <img
+                                src={currentUser.avatar}
+                                alt="You"
+                                className="rounded-full w-8 h-8 ml-3"
+                            />
+                        )}
+                    </div>
+
+                    {/* Reactions display */}
+                    <div className={`flex mt-1 ${isOwnMessage ? 'justify-start' : 'justify-end'}`}>
+                        <MessageReactions
+                            message={msg}
+                            currentUser={currentUser}
+                            onReact={(emoji) => handleReaction(msg._id, emoji)}
+                            existingReactions={msg.reactions || []}
+                            onRemoveReaction={(emoji) => handleRemoveReaction(emoji, msg._id)}
+                        />
+                    </div>
+
+                    <div className="relative h-4 w-28">
+                        <div className="absolute">
+                            {renderMessageStatus(msg, index === messages.length - 1)}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
     const renderMessageContent = (message) => {
         if (message.type === 'multimedia' && message.attachments && message.attachments.length > 0) {
             return (
-                <div>
-                    {message.content && <p className="text-sm">{message.content}</p>}
+                <div className="">
                     {message.attachments.map((file, index) => {
                         switch (file.fileType) {
                             case 'image':
@@ -420,22 +802,23 @@ const ChatWindow = ({ conversation, currentUser }) => {
                                         <img
                                             src={file.fileUrl}
                                             alt={file.fileName}
-                                            className="max-w-full h-auto rounded-lg mt-2"
+                                            className="h-44 w-60 rounded-t-lg mt-2"
                                         />
+                                        {message.content && <p className="text-sm bg-blue-500 text-white w-full text-end py-1 px-3 rounded-b-lg">{message.content}</p>}
                                     </div>
                                 );
-                            case 'pdf':
-                                return (
-                                    <a
-                                        key={index}
-                                        href={file.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 text-black"
-                                    >
-                                        PDF: {file.fileName}
-                                    </a>
-                                );
+                            // case 'pdf':
+                            //     return (
+                            //         <a
+                            //             key={index}
+                            //             href={file.fileUrl}
+                            //             target="_blank"
+                            //             rel="noreferrer"
+                            //             className="flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 text-black"
+                            //         >
+                            //             {file.fileName}
+                            //         </a>
+                            //     );
                             default:
                                 return (
                                     <a
@@ -445,7 +828,12 @@ const ChatWindow = ({ conversation, currentUser }) => {
                                         rel="noopener noreferrer"
                                         className="flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 text-black"
                                     >
-                                        {file.fileName}
+                                        <div className="items-center flex justify-center">
+                                            <div className="mr-2">
+                                                {getFileIcon(file?.fileType)}
+                                            </div>
+                                            <p className="text-[14px] font-semibold py-1 rounded-xl">{file.fileName}</p>
+                                        </div>
                                     </a>
                                 );
                         }
@@ -466,7 +854,6 @@ const ChatWindow = ({ conversation, currentUser }) => {
 
     const renderMessageStatus = (message, isLastMessage) => {
         if (!isLastMessage || message.sender._id !== currentUser._id) return null;
-
         const statusColors = {
             read: 'text-gray-400',
             delivered: 'text-blue-500',
@@ -479,6 +866,15 @@ const ChatWindow = ({ conversation, currentUser }) => {
             sent: 'Sent'
         };
 
+        if (message.isRecalled) {
+            return (
+                <div className={`text-xs font-serif ${statusColors[message.status]} flex items-center`}>
+                    <IoIosCheckmark className="text-xl" />
+                    {statusText[message.status]}
+                    {message.status !== 'sent' && ` at ${formatMessageTime(message.readAt || message.deliveredAt || message.sentAt)}`}
+                </div>
+            );
+        }
         return (
             <div className={`text-xs font-serif ${statusColors[message.status]} flex items-center`}>
                 <IoIosCheckmark className="text-xl" />
@@ -530,59 +926,28 @@ const ChatWindow = ({ conversation, currentUser }) => {
             </div>
             <div className="flex-1 overflow-y-auto p-4">
                 <div className="space-y-4">
-                    {messages.map((msg, index) => (
-                        <div
-                            key={msg._id}
-                            className={`flex items-start ${msg.sender._id === currentUser._id ? 'justify-end' : 'justify-start'}`}
-                        >
-                            <div className="flex flex-col">
-                                {conversation.type === 'group' && msg.sender._id !== currentUser._id && (
-                                    <div className="text-[10px] text-gray-500 mb-1 mr-1">{msg.sender.name}</div>
-                                )}
-                                <div className="flex">
-                                    {msg.sender._id !== currentUser._id && (
-                                        <img
-                                            src={msg.sender.avatar}
-                                            alt={msg.sender.name}
-                                            className="rounded-full w-8 h-8 mr-3"
-                                        />
-                                    )}
-                                    <div
-                                        className={`p-3 rounded-lg max-w-xs ${msg.sender._id === currentUser._id
-                                            ? 'bg-blue-500 text-white'
-                                            : 'bg-gray-200'
-                                            }`}
-                                    >
-                                        {msg.file ? (
-                                            <FilePreviewItem
-                                                file={{
-                                                    fileName: msg.file.name,
-                                                    fileType: msg.file.type.startsWith('image') ? 'image' : 'raw',
-                                                    fileUrl: msg.file.url,
-                                                }}
-                                                onRemove={null} // Vì tin nhắn đã gửi thì không cần xóa
-                                            />
-                                        ) : (
-                                            renderMessageContent(msg) 
-                                        )}
-                                    </div>
-                                    {msg.sender._id === currentUser._id && (
-                                        <img
-                                            src={currentUser.avatar}
-                                            alt="You"
-                                            className="rounded-full w-8 h-8 ml-3"
-                                        />
-                                    )}
-                                </div>
-                                <div className="mt-2">
-                                    {renderMessageStatus(msg, (msg.sender._id === currentUser._id) && (index === messages.length - 1))}
-                                </div>
-                            </div>
-                            <div ref={messagesEndRef} />
-                        </div>
-                    ))}
+                    {messages.map((msg, index) => renderMessage(msg, index))}
+                    <div ref={messagesEndRef} />
                 </div>
             </div>
+            {replyingTo && (
+                <div className="px-4 py-2 bg-gray-100 flex items-center justify-between">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-semibold">
+                            Replying to {replyingTo.sender.name}
+                        </span>
+                        <span className="text-sm text-gray-600 truncate">
+                            {replyingTo.content}
+                        </span>
+                    </div>
+                    <button
+                        onClick={cancelReply}
+                        className="text-gray-500 hover:text-gray-700"
+                    >
+                        <MdClose />
+                    </button>
+                </div>
+            )}
             {previews.length > 0 && (
                 <div className="flex items-center space-x-2 p-2">
                     {previews.map((preview) => (
@@ -624,8 +989,32 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 />
                 <IoIosSend className="text-3xl" onClick={sendMessage} />
             </div>
+            <Dialog
+                open={recallDialogOpen}
+                onOpenChange={setRecallDialogOpen}
+            >
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Recall Message</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <Button
+                            onClick={() => confirmRecall('everyone')}
+                            className="w-full mt-3"
+                        >
+                            Recall for everyone
+                        </Button>
+                        <Button
+                            onClick={() => confirmRecall('self')}
+                            className="w-full"
+                            variant="outline"
+                        >
+                            Recall for me only
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
-
     );
 };
 

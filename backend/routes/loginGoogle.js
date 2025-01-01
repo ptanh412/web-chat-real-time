@@ -82,7 +82,9 @@ router.post('/google', async (req, res) => {
 				avatar: user.avatar,
 				status: 'online',
 				_id: user._id,
-				lastActive: new Date()
+				lastActive: new Date(),
+				phoneNumber: user.phoneNumber,
+				about: user.about
 			}
 		})
 	} catch (error) {

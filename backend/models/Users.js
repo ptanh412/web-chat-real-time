@@ -22,6 +22,14 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: false,
     },
+    about :{
+        type: String,
+        default: 'Write something about yourself',
+    },
+    phoneNumber:{
+        type: String,
+        default: 'Write your phone number',
+    },
     avatar:{
         type: String,
         default: 'https://res.cloudinary.com/doruhcyf6/image/upload/v1732683090/blank-profile-picture-973460_1280_docdnf.png',

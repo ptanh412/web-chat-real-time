@@ -37,19 +37,25 @@ const Login = () => {
                 },
             });
             if (response.status === 200) {
-                const { token, name, avatar, status, _id, lastActive } = response.data.data;
+                const { token, name, avatar, status, _id, lastActive, email, phoneNumber, about } = response.data.data;
                 localStorage.setItem("token", token);
                 localStorage.setItem("name", name);
                 localStorage.setItem("avatar", avatar);
                 localStorage.setItem("status", 'online');
                 localStorage.setItem("userId", _id);
                 localStorage.setItem("lastActive", lastActive);
+                localStorage.setItem("email", email);
+                localStorage.setItem("phoneNumber", phoneNumber);
+                localStorage.setItem("about", about);
 
                 setUser(prevUser => ({
                     ...prevUser,
                     _id,
                     name,
-                    avatar,
+                    email,
+                    phoneNumber,
+                    about,
+                    avatar: avatar || 'https://res.cloudinary.com/doruhcyf6/image/upload/v1734411009/Chat/1734411118923_blank-profile-picture-973460_1280.png.png',
                     status: 'online',
                     token,
                     lastActive: new Date().toISOString()
@@ -108,19 +114,26 @@ const Login = () => {
                 },
             })
             if (response.status === 200) {
-                const { token, name, avatar, status, _id, lastActive } = response.data.data;
+                const { token, name, avatar, status, _id, lastActive, email, phoneNumber, about } = response.data.data;
                 localStorage.setItem("token", token);
                 localStorage.setItem("name", name);
                 localStorage.setItem("avatar", avatar);
                 localStorage.setItem("status", 'online');
                 localStorage.setItem("userId", _id);
                 localStorage.setItem("lastActive", lastActive);
+                localStorage.setItem("email", email);
+                localStorage.setItem("phoneNumber", phoneNumber);
+                localStorage.setItem("about", about);
 
                 setUser(prevUser => ({
                     ...prevUser,
                     _id,
                     name,
-                    avatar,
+                    googleId: decode.sub,
+                    email,
+                    phoneNumber,
+                    about,
+                    avatar: avatar || 'https://res.cloudinary.com/doruhcyf6/image/upload/v1734411009/Chat/1734411118923_blank-profile-picture-973460_1280.png.png',
                     status: 'online',
                     token,
                     lastActive: new Date().toISOString()

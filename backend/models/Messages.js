@@ -14,21 +14,34 @@ const messageSchema = new mongoose.Schema({
     content: {
         type: String,
         default: '',
-        // Loại bỏ required: true
         validate: {
-            validator: function(value) {
-                // Kiểm tra nếu không có attachments thì content phải có nội dung
+            validator: function (value) {
                 return this.attachments && this.attachments.length > 0 || (value && value.trim() !== '');
             },
             message: 'Message must have content or attachments'
         }
     },
+    reactions: [{
+        emoji: {
+            type: String,
+            enum: ['❤️', '👍', '😮', '😠', '😢'],
+            required: true
+        },
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Users',
+            required: true
+        },
+        createdAt: {
+            type: Date,
+            default: Date.now,
+        }
+    }],
     type: {
         type: String,
         required: true,
         enum: ['text', 'multimedia'],
-        // Tự động xác định loại tin nhắn dựa trên nội dung
-        default: function() {
+        default: function () {
             return this.attachments && this.attachments.length > 0 ? 'multimedia' : 'text';
         }
     },
@@ -52,6 +65,7 @@ const messageSchema = new mongoose.Schema({
             enum: ['image', 'video', 'pdf', 'document', 'spreadsheet', 'presentation', 'archive', 'raw', 'other'],
             default: 'other'
         },
+        mimeType: String,
         fileSize: Number,
     }],
     readBy: {
@@ -71,21 +85,29 @@ const messageSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
-    tempId:{
+    tempId: {
         type: String,
         unique: true,
         sparse: true
+    },
+    replyTo:{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Messages',
+    },
+    isRecalled:{
+        type: Boolean,
+        default: false
+    },
+    recallType: {
+        type: String,
+        enum: ['everyone', 'self']
     }
 }, {
-    // Thêm tùy chọn để cho phép custom validation
     strict: true,
-    // Tự động cập nhật updatedAt
     timestamps: { updatedAt: 'updatedAt' }
 });
 
-// Pre-save hook để kiểm tra điều kiện
-messageSchema.pre('save', function(next) {
-    // Nếu không có nội dung và không có file đính kèm
+messageSchema.pre('save', function (next) {
     if ((!this.content || this.content.trim() === '') && (!this.attachments || this.attachments.length === 0)) {
         return next(new Error('Message must have content or attachments'));
     }

@@ -6,15 +6,15 @@ import { FaImage, FaVideo, FaFilePdf, FaFileWord, FaFileExcel, FaFilePowerpoint,
 const Directory = ({ selectedConversation, socket }) => {
   const [files, setFiles] = useState([]);
   const [members, setMembers] = useState([]);
+
   useEffect(() => {
     if (!socket || !selectedConversation) return;
 
     socket.emit('get:files', selectedConversation._id);
-    socket.on('files:added', (newFile) => {
-      console.log('Conversation id Directory:', newFile.conversationId);
-      console.log('Selected Conversation id Directory:', selectedConversation._id);
-      console.log('New File directory:', newFile);
+
+    const handleNewFile = (newFile) => {
       if (newFile.conversationId === selectedConversation._id) {
+
         setFiles(prevFiles => {
           const fileExists = prevFiles.some(file =>
             file.fileUrl === newFile.fileUrl &&
@@ -22,24 +22,36 @@ const Directory = ({ selectedConversation, socket }) => {
           );
 
           if (!fileExists) {
-            console.log('Adding new file:', newFile);
-            return [...prevFiles, newFile];
+            const formattedFile = {
+              fileName: newFile.fileName,
+              fileType: newFile.fileType || getFileTypeFromName(newFile.fileName),
+              fileSize: newFile.fileSize,
+              fileUrl: newFile.fileUrl,
+              sender: newFile.sender,
+              conversationId: newFile.conversationId,
+              createdAt: newFile.createdAt || new Date().toISOString()
+            }
+            return [formattedFile, ...prevFiles];
           }
           return prevFiles;
         });
-      }else{
-        console.log('File not added:', newFile);
       }
-    })
-
-    socket.emit('get:members', selectedConversation._id);
-    socket.on('members:list', (membersList) => {
-      setMembers(membersList);
-    });
-
+    }
     socket.on('files:list', (filesList) => {
       setFiles(filesList);
     });
+
+    socket.on('files:added', handleNewFile);
+
+
+    if (selectedConversation.type === 'group') {
+      socket.emit('get:members', selectedConversation._id);
+      socket.on('members:list', (membersList) => {
+        setMembers(membersList);
+      });
+    }
+
+
     return () => {
       socket.off('files:list');
       socket.off('members:list');
@@ -47,42 +59,64 @@ const Directory = ({ selectedConversation, socket }) => {
     }
   }, [socket, selectedConversation]);
 
-  const getFileIcon = (fileType) => {
-    switch (fileType) {
-      case 'image': return <FaImage className="text-red-400 bg-red-200 rounded-full p-1 text-2xl" />;
-      case 'video': return <FaVideo className="text-green-500" />;
-      case 'pdf': return <FaFilePdf className="text-red-500" />;
-      case 'document': return <FaFileWord className="text-blue-400" />;
-      case 'spreadsheet': return <FaFileExcel className="text-green-600" />;
-      case 'presentation': return <FaFilePowerpoint className="text-orange-500" />;
-      case 'archive': return <FaFileArchive className="text-gray-500" />;
-      default: return <FaFile className="text-green-300 bg-green-100 rounded-full p-1 text-2xl" />;
-    }
+  const getFileTypeFromName = (fileName) => {
+    if (!fileName) return 'file';
+    const extension = fileName.split('.').pop().toLowerCase();
+
+    const typeMap = {
+      'pdf': 'pdf',
+      'doc': 'document',
+      'docx': 'document',
+      'xls': 'spreadsheet',
+      'xlsx': 'spreadsheet',
+      'ppt': 'presentation',
+      'pptx': 'presentation',
+      'zip': 'archive',
+      'rar': 'archive',
+      'jpg': 'image',
+      'jpeg': 'image',
+      'png': 'image',
+      'gif': 'image',
+      'mp4': 'video',
+      'avi': 'video',
+      'mov': 'video'
+    };
+
+    return typeMap[extension] || 'file';
   };
+  const getFileIcon = (fileType) => {
+    const iconMap = {
+      'image': <div className="bg-blue-500 text-white p-1 rounded-lg"><FaImage className="text-sm" /></div>,
+      'video': <div className="bg-green-500 text-white p-1 rounded-lg"><FaVideo className="text-sm" /></div>,
+      'pdf': <div className="bg-red-500 text-white p-1 rounded-lg"><FaFilePdf className="text-sm" /></div>,
+      'document': <div className="bg-blue-400 text-white p-1 rounded-lg"><FaFileWord className="text-sm" /></div>,
+      'spreadsheet': <div className="bg-green-600 text-white p-1 rounded-lg"><FaFileExcel className="text-sm" /></div>,
+      'presentation': <div className="bg-orange-500 text-white p-1 rounded-lg"><FaFilePowerpoint className="text-sm" /></div>,
+      'archive': <div className="bg-gray-500 text-white p-1 rounded-lg"><FaFileArchive className="text-sm" /></div>,
+      'other': <div className="bg-gray-400 text-white p-1 rounded-lg"><FaFile className="text-sm" /></div>
+    };
+    return iconMap[fileType] || iconMap.other;
+  };
+
   const formatFileSize = (sizeInBytes) => {
-    // Ensure sizeInBytes is a number
     const size = Number(sizeInBytes);
 
     if (isNaN(size)) return 'Unknown size';
 
-    // Convert to MB
     if (size >= 1024 * 1024) {
       const sizeInMB = (size / (1024 * 1024)).toFixed(2);
       return `${sizeInMB} MB`;
     }
 
-    // Convert to KB
     if (size >= 1024) {
       const sizeInKB = (size / 1024).toFixed(2);
       return `${sizeInKB} KB`;
     }
 
-    // Return in bytes if less than 1024
     return `${size} bytes`;
   };
 
   const truncateFileName = (fileName, maxLength = 20) => {
-    // Add a check to ensure fileName is a string
     if (!fileName || typeof fileName !== 'string') {
       return 'Unknown File';
     }
@@ -104,31 +138,34 @@ const Directory = ({ selectedConversation, socket }) => {
         <h1 className="font-bold text-3xl">Directory</h1>
         <HiOutlineDotsVertical className="text-3xl text-blue-500 bg-slate-200 p-1 rounded-full" />
       </div>
-      <div className="">
-        <div className="mt-2 border-b">
-          <div className="p-7">
-            <div className="flex items-center space-x-3">
-              <h1 className="font-bold text-lg">Members</h1>
-              <p className="text-sm text-black bg-slate-200 rounded-full font-bold px-2">{calculateMemberCount(members)}</p>
+      
+      <div className="flex-1 overflow-y-auto">
+        {selectedConversation?.type === 'group' && (
+          <div className="mt-2 border-b">
+            <div className="p-7">
+              <div className="flex items-center space-x-3">
+                <h1 className="font-bold text-lg">Members</h1>
+                <p className="text-sm text-black bg-slate-200 rounded-full font-bold px-2">{calculateMemberCount(members)}</p>
+              </div>
+              <ul className="mt-3">
+                {members.map((member, index) => (
+                  <li key={index} className="flex items-center space-x-3 mt-5">
+                    <img
+                      className="w-8 h-8 bg-gray-200 rounded-full"
+                      src={member.avatar}
+                    />
+                    <div>
+                      <h1 className="font-semibold">{member.name}</h1>
+                      <p className="text-sm text-gray-400">{member.role}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
 
             </div>
-            <ul className="mt-3">
-              {members.map((member, index) => (
-                <li key={index} className="flex items-center space-x-3 mt-5">
-                  <img
-                    className="w-8 h-8 bg-gray-200 rounded-full"
-                    src={member.avatar}
-                  />
-                  <div>
-                    <h1 className="font-semibold">{member.name}</h1>
-                    <p className="text-sm text-gray-400">{member.role}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-
           </div>
-        </div>
+        )}
+
         <div className="">
           <div className="flex items-center space-x-3 px-7 py-2">
             <h1 className="font-bold text-lg">Files</h1>
@@ -140,7 +177,7 @@ const Directory = ({ selectedConversation, socket }) => {
                 No files in this conversation
               </div>
             ) : (
-              <div className="overflow-y-auto max-h-[170px]">
+              <div className="overflow-y-auto">
                 {files.map((file, index) => (
                   <div
                     key={index}
@@ -148,7 +185,6 @@ const Directory = ({ selectedConversation, socket }) => {
                   >
                     <div className="mr-4">{getFileIcon(file?.fileType)}</div>
                     <div className="flex-1">
-                      {/* Truncate file name */}
                       <p className="font-medium truncate max-w-[200px]">
                         {truncateFileName(file?.fileName)}
                       </p>

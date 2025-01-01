@@ -66,72 +66,208 @@ const ConvesationList = ({ setSelectedConversation }) => {
     getUnfriends();
   }, [user?.token]);
 
-  useEffect(() => {
-    if (!socket || !user) return;
+  const handleUserStatusChange = useCallback((user) => {
+    setConversations(prevConversations =>
+      prevConversations.map(conv => {
+        if (conv.type === 'private' && conv.otherParticipant?._id === user._id) {
+          return {
+            ...conv,
+            otherParticipant: { ...conv.otherParticipant, ...user }
+          };
+        }
+        return conv;
+      })
+    );
+  }, []);
 
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('user:online', handleUserStatusChange);
+    socket.on('user:offline', handleUserStatusChange);
+
+    return () => {
+      socket.off('user:online', handleUserStatusChange);
+      socket.off('user:offline', handleUserStatusChange);
+    };
+  }, [socket, handleUserStatusChange]);
+
+  useEffect(() => {
+    if (!socket || !user?._id) {
+      console.log('Socket or user not available');
+      return;
+    };
+
+   
+    const formatConversation = (conversation) => {
+      const formatted = {
+        _id: conversation._id,
+        type: conversation.type,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+        lastMessage: conversation.lastMessage,
+        participants: conversation.participants?.map(p => ({
+          _id: p._id,
+          name: p.name,
+          avatar: p.avatar,
+          status: p.status,
+          lastActive: p.lastActive
+        }))
+      };
+
+      if (conversation.type === 'group') {
+        return {
+          ...formatted,
+          name: conversation.name,
+          avatarGroup: conversation.avatarGroup,
+          creator: conversation.creator,
+        };
+      }
+    
+      if (conversation.type === 'private' && conversation.otherParticipant) {
+        return {
+          ...formatted,
+          otherParticipant: {
+            _id: conversation.otherParticipant._id,
+            name: conversation.otherParticipant.name,
+            avatar: conversation.otherParticipant.avatar,
+            status: conversation.otherParticipant.status,
+            lastActive: conversation.otherParticipant.lastActive
+          }
+        };
+      }
+
+      return formatted;
+    };
     socket.emit('get:conversations', user._id);
 
     socket.on('conversations:list', (conversationList) => {
-
-      const validConversations = conversationList.filter((conv) =>
-        conv.type === 'group' ||
-        (conv.type === 'private' && friendIds.includes(conv.otherParticipant._id))
-      );
-      setConversations(validConversations || []);
+      setConversations(conversationList.map(formatConversation));
     });
 
-    socket.on('conversation:created', (conversation) => {
+    const handleNewConversation = (data) => {
+      console.log('New conversation:', data);
+      const { conversation, isRecipient } = data;
 
-      const isValidConversation = cov => cov.type === 'group' || (
-        conversation.otherParticipant && friendIds.includes(conversation.otherParticipant._id)
-      )
-      if (!isValidConversation) {
-        setConversations(prevConversations => {
-          // Check if conversation already exists
-          const existingConversation = prevConversations.find(
-            conv => conv._id === conversation._id
-          );
-
-          if (existingConversation) {
-            return prevConversations.map(conv =>
-              conv._id === conversation._id ? conversation : conv
-            );
-          }
-          return [...prevConversations, conversation].sort((a, b) => {
-            const aTime = a.lastMessage?.createdAt ? new Date(a.lastMessage.createdAt) : new Date(0);
-            const bTime = b.lastMessage?.createdAt ? new Date(b.lastMessage.createdAt) : new Date(0);
-            return bTime - aTime;
+      setConversations(prev => {
+        const exists = prev.some(conv => conv._id === conversation._id);
+        if (!exists) {
+          const formattedConversation = formatConversation(conversation);
+          return [...prev, formattedConversation].sort((a, b) => {
+            const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
+            const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
+            return new Date(bTime) - new Date(aTime);
           });
-        });
-
-        setSelectedConversation(conversation);
-      }
-    });
-    socket.on('conversation:updated', (updatedConversation) =>{
-      
-      setConversations(prevConversations => {
-        return prevConversations.map(conv =>
-          conv._id === updatedConversation._id ? updatedConversation : conv
-        );
+        }
+        return prev;
       });
-    })
+      if (isRecipient) {
+        setSelectedConversation(formatConversation(conversation));
+      }
+    };
+
+    socket.on('conversation:created', handleNewConversation);
 
     socket.on('new:message', (newMessage) => {
-      console.log('Conversation Id:', newMessage.conversationId);
       console.log('New message:', newMessage);
       setConversations(prevConversations => {
-        // Tìm conversation chứa tin nhắn mới
-        const updatedConvs = prevConversations.map(conv => 
-          conv._id === newMessage.conversationId
-          ? {
+        const updatedConvs = prevConversations.map(conv => {
+          if (conv._id === newMessage.conversationId) {
+            return {
               ...conv,
-              lastMessage: newMessage,
-              updatedAt: new Date()
-            }
-          : conv
-        );
+              lastMessage: {
+                ...newMessage,
+                sender: {
+                  _id: newMessage.sender._id,
+                  name: newMessage.sender.name,
+                  avatar: newMessage.sender.avatar
+                }
+              },
+              updatedAt: new Date(newMessage.createdAt || newMessage.sentAt)
+            };
+          }
+          return conv;
+        });
 
-        // Sắp xếp lại danh sách conversation
+        return updatedConvs.sort((a, b) => {
+          const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
+          const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
+          return new Date(bTime) - new Date(aTime);
+        });
+      });
+    });
+    socket.on('message:recalled', ({ messageId, recallType, message, sender, originalContent }) => {
+      setConversations(prev => {
+        const updateConvs = prev.map(conv => {
+          if (conv.lastMessage?._id === messageId) {
+            const updatedContent = recallType === 'everyone'
+              ? (sender._id === user._id
+                ? 'You have recalled a message'
+                : `${sender.name} has recalled a message`)
+              : (recallType === 'self' && sender._id === user._id)
+                ? 'You have recalled a message'
+                : originalContent;
+
+            return {
+              ...conv,
+              lastMessage: {
+                ...message,
+                isRecalled: true,
+                recallType,
+                content: updatedContent,
+                status: 'delivered',
+                sender: {
+                  _id: sender._id,
+                  name: sender.name,
+                  avatar: sender.avatar,
+                  status: sender.status,
+                  lastActive: sender.lastActive
+                }
+              },
+              updatedAt: new Date()
+            };
+          }
+          return conv;
+        });
+
+        return updateConvs.sort((a, b) => {
+          const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
+          const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
+          return new Date(bTime) - new Date(aTime);
+        });
+      });
+    });
+    socket.on('conversation:updated', (updatedConversation) => {
+      setConversations(prev => {
+        const updatedConvs = prev.map(conv => {
+          if (conv._id === updatedConversation._id) {
+            const lastMessage = updatedConversation.lastMessage;
+            let updateContent = lastMessage.content;
+            if (lastMessage.isRecalled) {
+              if (lastMessage.recallType === 'everyone') {
+                updateContent = lastMessage.sender._id === user._id
+                  ? 'You have recalled a message'
+                  : `${lastMessage.sender.name} has recalled a message`;
+              } else if (lastMessage.recallType === 'self') {
+                updateContent = lastMessage.sender._id === user._id
+                  ? 'You have recalled a message'
+                  : `${lastMessage.sender.name}: ${lastMessage.content}`;
+              }
+            }
+            return {
+              ...conv,
+              lastMessage: {
+                ...updatedConversation.lastMessage,
+                content: updateContent
+              },
+              updatedAt: updatedConversation.updatedAt
+            }
+          }
+          return conv;
+        });
+
+        console.log('Updated conversations:', updatedConvs);
+
         return updatedConvs.sort((a, b) => {
           const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
           const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
@@ -140,19 +276,39 @@ const ConvesationList = ({ setSelectedConversation }) => {
       });
     });
 
-    socket.on('friendRequestError', (error) => {
-      console.log('Friend request error:', error);
-      setAddFriends((prev) => prev.filter((id) => id !== error.friendId));
-    })
+    socket.on('friendRequestAccepted', (data) => {
+      const { conversation } = data;
+      if (conversation) {
+        setConversations(prev => {
+          const exists = prev.some(conv => conv._id === conversation._id);
+          if (!exists) {
+            const newConvs = [...prev, conversation];
+            return newConvs.sort((a, b) => {
+              return new Date(b.updatedAt) - new Date(a.updatedAt);
+            });
+          }
+          return prev;
+        })
+      }
+    });
 
     return () => {
       socket.off('conversations:list');
       socket.off('conversation:created');
       socket.off('conversation:updated');
       socket.off('new:message');
-      socket.off('friendRequestError');
+      socket.off('friendRequestAccepted');
+      socket.off('message:recalled');
     }
-  }, [socket, user, friendIds, setSelectedConversation]);
+
+  }, [socket, user?._id, setSelectedConversation]);
+  useEffect(() => {
+    if (!user._id) {
+      console.log('User data is not loaded yet');
+      return;
+    }
+    console.log('User data:', user);
+  }, [user._id]);
 
   const handleAddFriend = (friendId) => {
     if (socket && user) {
@@ -173,11 +329,12 @@ const ConvesationList = ({ setSelectedConversation }) => {
 
   const filteredConversations = conversations.filter((conv) => {
     const name = conv.type === 'group'
-      ? conv.name
-      : conv.otherParticipant?.name || '';
+      ? (conv.name || '') // Add fallback empty string
+      : (conv.otherParticipant?.name || '');
     return name.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
+  console.log('Conversations:', filteredConversations);
 
   const formatLastActive = (lastActive) => {
     if (!lastActive) return 'Unknown';
@@ -186,35 +343,34 @@ const ConvesationList = ({ setSelectedConversation }) => {
   }
 
   const formatLastMessage = (conversation) => {
-    
     const lastMessage = conversation.lastMessage;
-    if (!lastMessage) {
-      return 'No message';
+    if (!lastMessage) return 'No message';
+
+
+    const isSender = lastMessage.sender._id === user._id;
+    const prefix = isSender ? 'You' : lastMessage.sender.name;
+    if (lastMessage.isRecalled) {
+      if (lastMessage.recallType === 'everyone') {
+        return lastMessage.sender._id === user._id
+          ? 'You have recalled a message'
+          : `${lastMessage.sender.name} has recalled a message`;
+      } else if (lastMessage.recallType === 'self') {
+        return lastMessage.sender._id === user._id
+          ? 'You have recalled a message'
+          : isSender ? `You: ${lastMessage.content}` : `${prefix}: ${lastMessage.content}`;;
+      }
     }
 
-    if (lastMessage.sender._id === user._id) {
-      if (lastMessage.type === 'multimedia') {
-        if (lastMessage.attachments?.some((a) => a.fileType === 'image')) {
-          return `You sent a photo`;
-        } else if (lastMessage.attachments?.some((a) => a.fileType === 'raw')) {
-          return `You sent a file`;
-        }
-      } else {
-        return `You: ${lastMessage.content}`;
-      }
-    } else if (lastMessage.sender._id !== user._id) {
-      if (lastMessage.type === 'multimedia') {
-        if (lastMessage.attachments?.some((a) => a.fileType === 'image')) {
-          return `${lastMessage.sender.name} sent a photo`;
-        } else if (lastMessage.attachments?.some((a) => a.fileType === 'raw')) {
-          return `${lastMessage.sender.name} sent a file`;
-        }
-      } else {
-        return `${lastMessage.sender.name}: ${lastMessage.content}`;
+    if (lastMessage.type === 'multimedia') {
+      if (lastMessage.attachments?.some(a => a.fileType === 'image')) {
+        return `${prefix} sent a photo`;
+      } else  {
+        return `${prefix} sent a file`;
       }
     }
-    return `${lastMessage.sender.name}: ${lastMessage.content}`;
-  }
+
+    return isSender ? `You: ${lastMessage.content}` : `${prefix}: ${lastMessage.content}`;
+  };
 
   const handleBtnAddClick = (e) => {
     e.preventDefault();
@@ -275,7 +431,7 @@ const ConvesationList = ({ setSelectedConversation }) => {
           onBlur={() => setShowAdd(false)}
         />
         {showAdd && (
-          <div className="absolute top-20 left-[330px] bg-white shadow-xl rounded-lg w-60 h-fit">
+          <div className="absolute top-20 left-[400px] bg-white shadow-xl rounded-lg w-60 h-fit z-50">
             <button className="flex items-center space-x-2 mb-3 p-2 hover:bg-slate-200 w-full hover:rounded-t-lg" onClick={handleListFriend}>
               <FiUserPlus
                 className="text-xl text-blue-500"
@@ -283,7 +439,7 @@ const ConvesationList = ({ setSelectedConversation }) => {
               <span className="font-semibold">Add friend</span>
             </button>
             {showListFriend && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999px">
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                 <div className="bg-white p-6 rounded-lg w-96">
                   <div className="flex items-center">
                     <input
@@ -443,11 +599,14 @@ const ConvesationList = ({ setSelectedConversation }) => {
               </div>
 
               <div className="flex justify-between items-center">
-                <p className="text-sm text-gray-500 truncate">
+                <p className={`text-sm ${conversation.lastMessage?.isRecalled ? (
+                  conversation.lastMessage?.recallType === 'everyone' ? 'text-gray-500 ' : 'text-gray-500'
+                ) : conversation.lastMessage?.sender._id === user._id ? 'text-gray-500 ' : 'text-gray-500'} truncate`}>
                   {conversation.lastMessage
                     ? formatLastMessage(conversation)
                     : 'No message yet'
                   }
+
                 </p>
                 {conversation.type !== 'group' && conversation.otherParticipant?.status !== 'online' && (
                   <p className="text-xs text-gray-400">Offline</p>

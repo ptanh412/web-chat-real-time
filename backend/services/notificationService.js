@@ -12,12 +12,12 @@ const createNotification = async ({ userId, type, referenceId, content }) => {
     return savedNotification;
 }
 
-const getNotificationsByUserId = async (userId, isRead = null) => {
+const getNotificationsByUserId = async (userId) => {
     const filter = { userId };
 
-    if (isRead !== null) {
-        filter.isRead = isRead;
-    }
+    // if (isRead !== null) {
+    //     filter.isRead = isRead;
+    // }
     return await Notifacations.find(filter)
         .sort({ createdAt: -1 })
         .limit(20);

@@ -7,10 +7,13 @@ export const UserProvider = ({ children }) => {
     const [user, setUser] = useState(() => ({
         _id: localStorage.getItem("userId") || "",
         name: localStorage.getItem("name") || "Guest",
+        email: localStorage.getItem("email") || "",
         token: localStorage.getItem("token") || "",
         status: localStorage.getItem("status") || "Hey there! I'm using WhatsApp.",
         avatar: localStorage.getItem("avatar") || "",
         lastActive: localStorage.getItem("lastActive") || "",
+        phoneNumber: localStorage.getItem("phoneNumber") || "",
+        about: localStorage.getItem("about") || "",
     }));
     const [socket, setSocket] = useState(null);
 
@@ -19,17 +22,24 @@ export const UserProvider = ({ children }) => {
             const newSocket = io("http://localhost:5000", {
                 auth: { token: user.token },
             });
+            newSocket.on("connect", () => {
+                newSocket.emit('user:online', {
+                    _id: user._id,
+                    status: 'online',
+                    lastActive: new Date(),
+                    name: user.name,
+                    avatar: user.avatar
+                });
+            });
+
             setSocket(newSocket);
-            newSocket.emit('user:online',{
-                _id: user._id,
-                status: 'online',
-                lastActive: new Date()
-            })
+
             return () => {
-                newSocket.disconnect();
+                if (newSocket) {
+                    newSocket.disconnect();
+                }
             };
         }
-
     }, [user.token]);
 
 
@@ -52,7 +62,6 @@ export const UserProvider = ({ children }) => {
             });
         }
         const handleUserOffline = (data) => {
-            // console.log('User Offline Event:', data);
             setUser((prevUser) => {
                 if (data._id === prevUser._id) {
                     localStorage.setItem("status", data.status || 'offline');
@@ -73,33 +82,38 @@ export const UserProvider = ({ children }) => {
         };
     }, [socket, user._id]);
     const logout = () => {
-        if (socket) {
-            socket.emit('user:offline', {
-                _id: user._id,
-                status: 'offline',
-                lastActive: new Date()
-            });
-        }
-        localStorage.clear();
-        setUser({
-            _id: "",
-            name: "Guest",
-            token: "",
-            status: "offline",
-            avatar: "",
-            lastActive: null,
+        return new Promise((resolve) => {
+            if (socket) {
+                // Update local state first
+                localStorage.clear();
+                setUser({
+                    _id: "",
+                    name: "Guest",
+                    token: "",
+                    status: "offline",
+                    avatar: "",
+                    lastActive: null,
+                });
+                
+                // Then emit offline status
+                socket.emit('user:offline', {
+                    _id: user._id,
+                    status: 'offline',
+                    lastActive: new Date()
+                });
+                
+                socket.disconnect();
+                setSocket(null);
+            }
+            resolve();
         });
-        if (socket) {
-            socket.disconnect();
-        }
-        setSocket(null);
-    }
+    };
     const updateUser = (updates) => {
         const updatedUser = { ...user, ...updates };
         setUser(updatedUser);
-        for (const key in updates) {
-            localStorage.setItem(key, updates[key]);
-        }
+        Object.entries(updates).forEach(([key, value])=>{
+            localStorage.setItem(key, value || ""); ;
+        })
     };
     return (
         <UserContext.Provider value={{ user, setUser, socket, setSocket, logout, updateUser }}>
