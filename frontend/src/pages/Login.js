@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { MdOutlineEmail } from 'react-icons/md';
 import { CiLock } from 'react-icons/ci';
 import { FaCheckCircle, FaExclamationCircle } from 'react-icons/fa';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useContext } from 'react';
 import { AlertContext } from '../context/AlertMessage';
@@ -222,7 +222,7 @@ const Login = () => {
                                     />
                                 </div>
                             </div>
-                            <a href="" className='line-clamp-1 mb-5 ml-1 text-sm underline'> Forgot password?</a>
+                            <Link to="/forgot-password" className='line-clamp-1 mb-5 ml-1 text-sm underline'> Forgot password?</Link>
                             <button
                                 type="submit"
                                 className="py-2 bg-slate-950 text-white w-full rounded-xl font-semibold text-lg hover:bg-slate-900"

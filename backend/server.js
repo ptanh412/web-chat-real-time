@@ -11,6 +11,7 @@ const notificationRouter = require('./routes/notificationRoute');
 const friendRouter = require('./routes/friendshipRoute');
 const uploadRouter = require('./routes/uploadFileRoute');
 const loginGoogleRouter = require('./routes/loginGoogle');
+const getFiles = require('./routes/fileRoutes');
 require('./config/db');
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use('/api/notifications', notificationRouter);
 app.use('/api/friends', friendRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/auth', loginGoogleRouter);
+app.use('/api/files', getFiles);
 const PORT = 5000;
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

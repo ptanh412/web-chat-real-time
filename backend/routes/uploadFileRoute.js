@@ -5,35 +5,49 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const auth = require('../middlewares/auth');
+
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
     secure: true
 });
-const getAllowedFormats = (mimeType) => {
-    const mimeTypeLower = mimeType.toLowerCase();
 
-    const formatMap = {
-        'image': ['jpeg', 'png', 'gif', 'jpg'],
-        'video': ['mp4'],
-        'pdf': ['pdf'],
-        'word': ['doc', 'docx'],
-        'excel': ['xls', 'xlsx'],
-        'powerpoint': ['ppt', 'pptx'],
-        'zip': ['zip']
+
+const generateSecureFileName = (originalname) => {
+    const baseName = path.basename(originalname);
+
+    const randomPrefix = crypto.randomBytes(16).toString('hex');
+
+    const sanitized = baseName.replace(/[^a-zA-Z0-9.]/g, '_');
+
+    return `${randomPrefix}_${sanitized}`;
+}
+
+const isValidFileType = (mimeType, filename) => {
+    const allowedTypes = {
+        'image/jpeg': ['.jpg', '.jpeg'],
+        'image/png': ['.png'],
+        'image/gif': ['.gif'],
+        'application/pdf': ['.pdf'],
+        'application/msword': ['.doc'],
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+        'application/vnd.ms-excel': ['.xls'],
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
     };
 
-    const resourceType = getResourceType(mimeTypeLower);
-    return formatMap[resourceType] || [];
-};
-
+    const ext = path.extname(filename).toLowerCase();
+    return allowedTypes[mimeType]?.includes(ext);
+}
 
 const getResourceType = (mimeType) => {
     const mimeTypeLower = mimeType.toLowerCase();
 
     const mimeTypeMap = {
-        'image':{
+        'image': {
             matches: ['image/'],
             cloudinaryType: 'image'
         },
@@ -47,7 +61,7 @@ const getResourceType = (mimeType) => {
         },
         'document': {
             matches: [
-                'application/msword', 
+                'application/msword',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
             cloudinaryType: 'raw'
         },
@@ -62,7 +76,7 @@ const getResourceType = (mimeType) => {
                 'application/vnd.ms-powerpoint',
                 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
             cloudinaryType: 'raw'
-        },	
+        },
         'archive': {
             matches: [
                 'application/zip',
@@ -71,8 +85,8 @@ const getResourceType = (mimeType) => {
             cloudinaryType: 'raw'
         }
     };
-    
-    for (const [fileType, config] of Object.entries(mimeTypeMap)){
+
+    for (const [fileType, config] of Object.entries(mimeTypeMap)) {
         if (config.matches.some(match => mimeTypeLower.includes(match))) {
             return {
                 fileType: fileType,
@@ -80,7 +94,7 @@ const getResourceType = (mimeType) => {
             };
         }
     }
-    return{
+    return {
         fileType: 'other',
         cloudinaryType: 'raw'
     };
@@ -90,22 +104,26 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
         try {
-            // const fileFormat = getAllowedFormats(file.mimetype);
-            const {fileType, cloudinaryType} = getResourceType(file.mimetype);
+            const userId = req.user ? req.user._id : 'guest';
+            // const { fileType, cloudinaryType } = getResourceType(file.mimetype);
 
-            // if (!fileFormat) {
-            //     throw new Error(`File type ${file.mimetype} not supported`);
-            // }
+            const secureFileName = generateSecureFileName(file.originalname);
 
-            const originalFileName = file.originalname;
+            // const originalFileName = file.originalname;
 
             const params = {
-                folder: 'Chat',
-                resource_type: cloudinaryType,
-                public_id: `${Date.now()}_${originalFileName}`,
-                filename: originalFileName,
+                folder: `Chat/${userId}`,
+                resource_type: 'auto',
+                public_id: secureFileName,
+                transformation: [
+                    { quality: 'auto' },
+                    { fetch_format: 'auto' },
+                ],
+                sign_url: true,
+                type: 'authenticated',
+                // filename: originalFileName
             };
-            
+
             return params;
         } catch (err) {
             console.error('Error in Cloudinary Params:', err);
@@ -120,22 +138,8 @@ const uploadCloud = multer({
         fileSize: 20 * 1024 * 1024,
     },
     fileFilter: (req, file, cb) => {
-        const allowedTypes = [
-            'image/jpeg',
-            'image/png',
-            'image/gif',
-            'video/mp4',
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-powerpoint',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/zip',
-        ];
-
-        if (allowedTypes.includes(file.mimetype)) {
+    
+        if (isValidFileType(file.mimetype, file.originalname)) {
             console.log('File type allowed:', file.mimetype);
             cb(null, true);
         } else {
@@ -145,16 +149,12 @@ const uploadCloud = multer({
     }
 });
 
-router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
+router.post('/multiple', auth, uploadCloud.array('files', 10), async (req, res) => {
     try {
+        
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ error: 'No files uploaded' });
         }
-        // console.log('Uploaded Files Details:', req.files.map(file => ({
-        //     originalname: file.originalname,
-        //     mimetype: file.mimetype,
-        //     encoding: file.encoding
-        // })));
 
         const uploadResults = await Promise.all(req.files.map(async (file) => {
             try {
@@ -162,30 +162,35 @@ router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
                     console.error('No Cloudinary URL found for file:', file.originalname);
                     return null;
                 }
-                const {fileType} = getResourceType(file.mimetype);
-                return {
-                    fileName: file.originalname, 
+                const { fileType } = getResourceType(file.mimetype);
+
+                const fileToken = jwt.sign({
                     fileUrl: file.path,
+                    fileId: file.filename,
+                    userId: req.user.id
+                },
+                    process.env.JWT_SECRET_KEY,
+                    {
+                        expiresIn: '10m'
+                    }
+                );
+
+                const secureDownloadUrl = `http://localhost:5000/api/files/download/${fileToken}`;
+                return {
+                    fileName: file.originalname,
+                    fileUrl: secureDownloadUrl,
                     fileType: fileType,
                     fileSize: file.size,
                     mimetype: file.mimetype,
-                    originalName: file.originalname 
+                    // accessToken: fileToken
                 };
             } catch (fileError) {
                 console.error(`Error processing file ${file.originalname}:`, fileError);
                 return null;
             }
         }));
-
-        const validUploadResults = uploadResults.filter(result => result !== null);
-
-        if (validUploadResults.length === 0) {
-            return res.status(500).json({ error: 'Failed to upload any files' });
-        }
-
-        res.json({
-            files: validUploadResults
-        });
+    
+        res.json({files: uploadResults});
     } catch (error) {
         console.error('Upload Error:', error);
         res.status(500).json({
@@ -195,7 +200,7 @@ router.post('/multiple', uploadCloud.array('files', 10), async (req, res) => {
         });
     }
 });
-router.post('/upload-avatar', uploadCloud.single('file'), async (req, res) =>{
+router.post('/upload-avatar', uploadCloud.single('file'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
@@ -205,12 +210,51 @@ router.post('/upload-avatar', uploadCloud.single('file'), async (req, res) =>{
             fileUrl: req.file.path,
             message: 'File uploaded successfully'
         })
-            
+
     } catch (error) {
         console.error('Upload Error:', error);
-        res.status(500).json({error: 'Failed to upload file'});
+        res.status(500).json({ error: 'Failed to upload file' });
     }
 })
+
+// In your upload endpoint
+router.post('/upload-group-avatar', uploadCloud.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        // Validate file type
+        const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+        if (!validTypes.includes(req.file.mimetype)) {
+            return res.status(400).json({ error: 'Invalid file type' });
+        }
+
+        // Validate file size (10MB)
+        if (req.file.size > 10 * 1024 * 1024) {
+            return res.status(400).json({ error: 'File size too large' });
+        }
+
+        // Configure cloudinary upload
+        const result = await cloudinary.uploader.upload(req.file.path, {
+            folder: 'Chat',
+            allowed_formats: ['jpg', 'jpeg', 'png', 'gif'],
+            transformation: [
+                { width: 500, height: 500, crop: 'fill' },
+                { quality: 'auto' }
+            ]
+        });
+
+        res.status(200).json({
+            fileUrl: result.secure_url,
+            message: 'File uploaded successfully'
+        });
+    } catch (error) {
+        console.error('Upload Error:', error);
+        res.status(500).json({ error: 'Failed to upload file' });
+    }
+});
+
 router.use((err, req, res, next) => {
     console.error('Global Error Handler:', err);
     res.status(500).json({

@@ -11,6 +11,11 @@ const conversationSchema = new mongoose.Schema({
         ref: 'Users',
         required: true,
     }],
+    participantUnreadCount: {
+        type: Map,
+        of: Number,
+        default: () => new Map(),
+    },
     name: {
         type: String,
         default: '',
@@ -40,6 +45,15 @@ const conversationSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    isFriendshipPending: {
+        type: Boolean,
+        default: false,
+    },
+    friendRequestStatus :{
+        type: String,
+        enum: ['pending', 'recalled', 'none'],
+        default: 'none',
+    }
 });
 conversationSchema.pre(/^find/, function (next) {
     this.populate({

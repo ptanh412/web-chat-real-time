@@ -1,6 +1,13 @@
 // ..controllers/userController.js
+const Users = require('../models/Users');
 const userService = require('../services/userService');
+const { hashPassword } = require('../utils/encryption');
 const getUserIdFromToken = require('../utils/getUserIdFromToken');
+const { generateToken } = require('../utils/jwt');
+const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
+dotenv.config();
 
 const register = async (req, res) => {
     try {
@@ -37,6 +44,63 @@ const login = async (req, res) => {
         res.status(400).json({ message: error.message });
     }
 };
+
+const forgotPassword = async (req, res) => {
+    try {
+        const {email} = req.body;
+        const user = await Users.findOne({email});
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // const resetToken = await userService.generatePasswordResetToken(user._id);
+        const resetToken = generateToken({ userId: user._id }, '1h');
+        const resetLink = `http://localhost:3000/reset-password?token=${resetToken}`;
+
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD
+            }
+        })
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Password Reset Request',
+            html: `
+                <div>
+                    <h2>Reset Your Password</h2>
+                    <p>Please reset your password using the link below:</p>
+                    <a href="${resetLink}">
+                        <button style="background-color: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 8px;">
+                            Reset Password
+                        </button>
+                    </a>
+                    <p>If you are unable to click the above button, copy paste the below URL into your address bar:</p>
+                    <p>${resetLink}</p>
+                </div>
+            `
+        });
+        res.json({ message: 'Password reset link sent to your email' , success: true});
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const resetPassword = async (req, res) =>{
+    try {
+        const {token, newPassword} = req.body;
+        const decode = jwt.verify(token, process.env.JWT_SECRET_KEY);
+        const hashedPassword = await hashPassword(newPassword);
+
+        await Users.findByIdAndUpdate(decode.userId, {password: hashedPassword});
+
+        res.json({message: 'Password reset successfully', success: true});
+    } catch (error) {
+        res.status(400).json({message: error.message});
+    }
+}
 
 const getUserProfile = async (req, res) => {
     try {
@@ -117,6 +181,8 @@ const logout = async (req, res) => {
 module.exports = {
     register,
     login,
+    forgotPassword,
+    resetPassword,
     getUserProfile,
     updateProfile,
     updatePassword,

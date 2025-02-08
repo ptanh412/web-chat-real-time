@@ -1,12 +1,97 @@
 import React, { useEffect } from "react";
-import { HiOutlineDotsVertical } from "react-icons/hi";
+import { HiOutlineDotsVertical, HiUserRemove } from "react-icons/hi";
 import { useState } from "react";
 import { FaImage, FaVideo, FaFilePdf, FaFileWord, FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFile, FaDownload } from "react-icons/fa";
+import { useTheme } from "../context/ThemeContext";
+import GroupManagement from "./GroupManagement ";
+import { useUser } from "../context/UserContext";
+import ImagePreviewModal from "./ImgaePreviewModal";
 
-const Directory = ({ selectedConversation, socket }) => {
+const Directory = ({ selectedConversation, socket, setSelectedConversation }) => {
+  const { user } = useUser();
+  const { isDark } = useTheme();
   const [files, setFiles] = useState([]);
   const [members, setMembers] = useState([]);
+  const [selectedImage, setSelectedImage] = useState(null);
 
+  const isCreator = selectedConversation?.creator === user._id;
+
+  const isImageFile = (fileType) => {
+    return fileType === 'image';
+  };
+
+  const handleFileClick = (file) => {
+    if (isImageFile(file.fileType)) {
+      setSelectedImage({
+        url: file.fileUrl,
+        fileName: file.fileName
+      });
+    }
+  }
+
+  const handleDownloadFile = async (file, e) =>{
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const response = await fetch(file.fileUrl);
+      const blob = await response.blob();
+
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = file.fileName;
+      document.body.appendChild(link);
+      link.click();
+
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  useEffect(() => {
+    if (selectedConversation?.participants) {
+      setMembers(selectedConversation.participants);
+    }
+  }, [selectedConversation]);
+
+
+  useEffect(() => {
+    if (!socket || !selectedConversation) return;
+
+    const handleMemberRemove = (updatedGroup) => {
+      if (updatedGroup._id === selectedConversation._id) {
+        setMembers(updatedGroup.participants);
+        setSelectedConversation(updatedGroup);
+      }
+    };
+
+    socket.on('group:updated', handleMemberRemove);
+
+    return () => {
+      socket.off('group:updated', handleMemberRemove);
+    }
+  }, [socket, selectedConversation, setSelectedConversation]);
+
+
+  const handleRemoveMember = (memberId) => {
+    if (!socket || !selectedConversation || memberId === selectedConversation.creator) return;
+
+    const updatedMembers = members.filter(member => member._id !== memberId);
+    setMembers(updatedMembers);
+
+    setSelectedConversation(prev => ({
+      ...prev,
+      participants: prev.participants.filter(member => member._id !== memberId)
+    }))
+
+    socket.emit('group:removeMember', {
+      groupId: selectedConversation._id,
+      memberId: memberId
+    });
+  };
+ 
   useEffect(() => {
     if (!socket || !selectedConversation) return;
 
@@ -133,12 +218,22 @@ const Directory = ({ selectedConversation, socket }) => {
   }
 
   return (
-    <div className="">
-      <div className="flex justify-between items-center mt-3 px-5">
-        <h1 className="font-bold text-3xl">Directory</h1>
-        <HiOutlineDotsVertical className="text-3xl text-blue-500 bg-slate-200 p-1 rounded-full" />
-      </div>
-      
+    <div className={`${isDark ? 'bg-slate-800 text-white' : 'bg-white'} h-full flex flex-col rounded-lg`}>
+      {selectedConversation?.type === 'group' ? (
+        <GroupManagement
+          selectedConversation={selectedConversation}
+          socket={socket}
+          setSelectedConversation={setSelectedConversation}
+          onClose={() => setSelectedConversation(null)}
+        />
+      ) : (
+        <div className="flex justify-between items-center mt-3 px-5">
+          <h1 className="font-bold text-3xl">Directory</h1>
+          <HiOutlineDotsVertical className={`text-3xl text-blue-500  p-1 rounded-full ${isDark ? '' : 'bg-slate-200'} `} />
+        </div>
+
+      )}
+
       <div className="flex-1 overflow-y-auto">
         {selectedConversation?.type === 'group' && (
           <div className="mt-2 border-b">
@@ -149,15 +244,30 @@ const Directory = ({ selectedConversation, socket }) => {
               </div>
               <ul className="mt-3">
                 {members.map((member, index) => (
-                  <li key={index} className="flex items-center space-x-3 mt-5">
-                    <img
-                      className="w-8 h-8 bg-gray-200 rounded-full"
-                      src={member.avatar}
-                    />
-                    <div>
-                      <h1 className="font-semibold">{member.name}</h1>
-                      <p className="text-sm text-gray-400">{member.role}</p>
+                  <li key={index} className="flex items-center space-x-3 mt-5 justify-between">
+                    <div className="flex items-center space-x-3">
+                      <img
+                        className="w-8 h-8 bg-gray-200 rounded-full"
+                        src={member.avatar}
+                      />
+                      <div>
+                        <h1 className="font-semibold">{member.name}</h1>
+                        {selectedConversation.creator === member._id ? (
+                          <p className="text-sm text-gray-400">Creator</p>
+                        ) : (
+                          <p className="text-sm text-gray-400">Member</p>
+                        )}
+                        {/* <p className="text-sm text-gray-400">{member.role}</p> */}
+                      </div>
                     </div>
+                    {isCreator && member._id !== user._id && (
+                      <button
+                        onClick={() => handleRemoveMember(member._id)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <HiUserRemove className="text-xl" />
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -169,7 +279,7 @@ const Directory = ({ selectedConversation, socket }) => {
         <div className="">
           <div className="flex items-center space-x-3 px-7 py-2">
             <h1 className="font-bold text-lg">Files</h1>
-            <p className="text-sm text-black bg-slate-200 rounded-full font-bold px-2">{calculateFileCount(files)}</p>
+            <p className={`text-sm text-black ${isDark ? 'bg-gray-500 text-white' : 'bg-gray-200'} rounded-full font-bold px-2`}>{calculateFileCount(files)}</p>
           </div>
           <div className="mt-1">
             {files.length === 0 ? (
@@ -182,6 +292,7 @@ const Directory = ({ selectedConversation, socket }) => {
                   <div
                     key={index}
                     className="flex items-center px-7 py-2 cursor-pointer"
+                    onClick={() => handleFileClick(file)}
                   >
                     <div className="mr-4">{getFileIcon(file?.fileType)}</div>
                     <div className="flex-1">
@@ -190,24 +301,29 @@ const Directory = ({ selectedConversation, socket }) => {
                       </p>
                       <p className="text-sm text-gray-500 flex items-center space-x-2">
                         <span>Sent by {file.sender?.name || 'Unknown'}</span>
-                        <span className="text-xs bg-gray-200 px-2 py-0.5 rounded">
+                        <span className="text-xs bg-gray-200 px-2 py-0.5 rounded font-semibold">
                           {formatFileSize(file?.fileSize)}
                         </span>
                       </p>
                     </div>
-                    <a
-                      href={file?.fileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-500 hover:text-blue-700"
-                    >
-                      <FaDownload />
-                    </a>
+                    {!isImageFile(file.fileType) && (
+                      <button
+                        onClick={(e) => handleDownloadFile(file, e)}
+                      >
+                        <FaDownload className="text-blue-500"/>
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
+          <ImagePreviewModal
+            isOpen={!!selectedImage}
+            onClose={() => setSelectedImage(null)}
+            imageUrl={selectedImage?.url}
+            fileName={selectedImage?.fileName}
+          />
         </div>
       </div>
     </div>

@@ -14,7 +14,7 @@ const notificationSchema = new mongoose.Schema({
     referenceId:{
         type: mongoose.Schema.Types.ObjectId,
         required: true,
-    },
+    },  
     content: {
         type: String,
         required: true,

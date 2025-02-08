@@ -9,7 +9,7 @@ export const UserProvider = ({ children }) => {
         name: localStorage.getItem("name") || "Guest",
         email: localStorage.getItem("email") || "",
         token: localStorage.getItem("token") || "",
-        status: localStorage.getItem("status") || "Hey there! I'm using WhatsApp.",
+        status: localStorage.getItem("status") || "Please login to chat",
         avatar: localStorage.getItem("avatar") || "",
         lastActive: localStorage.getItem("lastActive") || "",
         phoneNumber: localStorage.getItem("phoneNumber") || "",

@@ -11,5 +11,6 @@ router.put('/friend-request/:friendshipId/reject',auth, friendshipController.rej
 router.delete('/friend/:friendshipId',auth, friendshipController.removeFriend);
 router.get('/friendList',auth, friendshipController.getFriendList);
 router.get('/unfriend',auth, friendshipController.getUnfriend);
+router.get('/pending-request',auth, friendshipController.getPendingFriendRequests);
 
 module.exports = router;

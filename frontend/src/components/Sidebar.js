@@ -1,15 +1,19 @@
-import React, { useContext, useEffect, useState, useCallback } from "react";
+import React, { useContext, useEffect, useState, useRef } from "react";
 import { LuHome } from "react-icons/lu";
 import { AiOutlineMessage } from "react-icons/ai";
 import { IoIosSearch, IoMdSettings, IoMdNotificationsOutline } from "react-icons/io";
+import { IoSunnyOutline } from "react-icons/io5";
+import { FaMoon } from "react-icons/fa";
+import { CiLogout } from "react-icons/ci";
 import { FaCheckCircle } from "react-icons/fa";
 import { RiProfileLine } from "react-icons/ri";
 import { useUser } from "../context/UserContext";
 import { GoDotFill } from "react-icons/go";
-import { useNavigate } from "react-router-dom"; // Import useNavigateimport axios from "axios";
+import { useLocation, useNavigate } from "react-router-dom"; // Import useNavigateimport axios from "axios";
 import { MdClose } from "react-icons/md";
 import axios from "axios";
 import { AlertContext } from "../context/AlertMessage";
+import { useTheme } from "../context/ThemeContext";
 
 const Sidebar = () => {
   const { user, socket, logout } = useUser();
@@ -18,14 +22,41 @@ const Sidebar = () => {
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [hasClick, setHasClick] = useState(false);
+  const { isDark, toggleTheme } = useTheme();
+  const [showSettings, setShowSettings] = useState(false);
+  const location = useLocation();
   const navigation = useNavigate();
 
-  const handleProfileClick = () =>{
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [])
+
+
+  const handleSettingsClick = () => setShowSettings(!showSettings);
+
+  const isActive = (path) => location.pathname === path;
+
+  const handleProfileClick = () => {
     navigation("/profile");
   }
-  const handleMessageClick = () =>{
+  const handleMessageClick = () => {
     navigation("/chat");
   }
+
+  const handleHomeClick = () => {
+    navigation("/home");
+  }
+
   useEffect(() => {
     const unreadCount = notifications.filter(
       n => !n.isRead && (n.type === 'friend_request' || n.type === 'message')
@@ -54,6 +85,7 @@ const Sidebar = () => {
 
     return `${Math.floor(years)}y`;
   };
+
   useEffect(() => {
     const fetchNotification = async () => {
       if (user?._id) {
@@ -94,19 +126,7 @@ const Sidebar = () => {
         }
       }
 
-      const handleFriendRequestResponse = (data) => {
-        const { notification } = data;
-        if (notification) {
-          setNotifications(prev => [notification, ...prev.filter(n =>
-            n.referenceId !== notification.referenceId
-          )]);
 
-          if (!notification.isRead && notification.userId === user._id) {
-            setUnreadNotificationsCount((prev) => prev + 1);
-          }
-        }
-
-      }
 
       socket.on('notificationsMarkedAsRead', (response) => {
         if (response.success) {
@@ -116,17 +136,30 @@ const Sidebar = () => {
         }
       });
 
-      // Add socket listeners
       socket.on('newFriendRequest', handleNewFriendRequest);
-      socket.on('friendRequestAccepted', handleFriendRequestResponse);
-      socket.on('friendRequestRejected', handleFriendRequestResponse);
 
-      // Cleanup listeners
+      socket.on('friendRequestResponded', (data) => {
+        const { notification, type } = data;
+
+        setNotifications(prev => {
+          const existingIndex = prev.findIndex(n => n.referenceId === notification.referenceId);
+          if (existingIndex === -1) {
+            return [notification, ...prev];
+          }
+
+          const newNotifications = [...prev];
+          newNotifications[existingIndex] = notification;
+          return newNotifications;
+        });
+        if (!notification.isRead) {
+          setUnreadNotificationsCount(prev => prev + 1);
+        }
+      })
+
       return () => {
         socket.off('newFriendRequest', handleNewFriendRequest);
-        socket.off('friendRequestAccepted', handleFriendRequestResponse);
-        socket.off('friendRequestRejected', handleFriendRequestResponse);
         socket.off('notificationsMarkedAsRead');
+        socket.off('friendRequestResponded');
       };
     }
   }, [socket, user?._id]);
@@ -181,6 +214,22 @@ const Sidebar = () => {
         requestId,
         status: 'accepted',
         userId: user._id,
+      }, (conversation) => {
+        if (conversation) {
+          setNotifications(prev => prev.map(n => {
+            if (n.referenceId === requestId) {
+              return {
+                ...n,
+                isRead: true,
+                type: 'friend_request_accepted',
+                content: 'You have accepted the friend request',
+              };
+            }
+            return n;
+          }));
+
+          setUnreadNotificationsCount(prev => Math.max(0, prev - 1));
+        }
       })
 
       setNotifications(prev => prev.map(n => {
@@ -189,7 +238,7 @@ const Sidebar = () => {
             ...n,
             isRead: true,
             type: 'friend_request_accepted',
-            content: 'Bạn đã chấp nhận lời mời kết bạn',
+            content: 'You have accepted the friend request',
           };
         }
         return n;
@@ -212,7 +261,7 @@ const Sidebar = () => {
             ...n,
             isRead: true,
             type: 'friend_request_rejected',
-            content: 'Bạn đã từ chối lời mời kết bạn',
+            content: 'You have declined the friend request.',
           };
         }
         return n;
@@ -268,17 +317,28 @@ const Sidebar = () => {
       <img src={user.avatar} alt="avatar" className="w-16 h-16 rounded-full z-10" />
       <p className="text-xl mt-2">{user.name}</p>
       <div className="flex items-center justify-center">
-        <GoDotFill className={`text-${user.status === "online" ? "green-500" : "gray-500"}`} />
-        <p className="">{user.status}</p>
+        {user.status === 'online' ? (
+          <>
+            <GoDotFill className="text-green-500 text-center" />
+            <p className="text-center font-semibold">{user.status}</p>
+          </>
+        ) : (
+          <p className="text-center font-semibold">{user.status}</p>
+        )}
+        {/* <GoDotFill className={`text-${user.status === "online" ? "green-500" : "gray-500"} text-center`} />
+        <p className="">{user.status}</p> */}
       </div>
       <ul className="mt-10 text-2xl flex-[4] flex items-center flex-col">
         <li className="mb-10">
-          <LuHome className="hover:text-blue-300 duration-300" />
+          <LuHome 
+          className={`hover:text-blue-300 duration-300 ${isActive('/home') ? 'text-blue-500' : ''}`} 
+          onClick={handleHomeClick}
+          />
         </li>
         <li className="mb-10">
-          <AiOutlineMessage 
-          className="hover:text-blue-300 duration-300" 
-          onClick={handleMessageClick}
+          <AiOutlineMessage
+            className={`hover:text-blue-300 duration-300 ${isActive('/chat') ? 'text-blue-500' : ''}`}
+            onClick={handleMessageClick}
           />
         </li>
         <li className="mb-10">
@@ -287,7 +347,7 @@ const Sidebar = () => {
 
         <li className="mb-10">
           <RiProfileLine
-            className="hover:text-blue-300 duration-300 cursor-pointer"
+            className={`hover:text-blue-300 duration-300 cursor-pointer ${isActive('/profile') ? 'text-blue-500' : ''}`}
             onClick={handleProfileClick}
           />
         </li>
@@ -302,7 +362,7 @@ const Sidebar = () => {
             </div>
           )}
           {showNotification && (
-            <div className="absolute top-7 left-3  bg-white border border-gray-300 rounded-md p-4 w-80 max-h-96 overflow-y-auto shadow-xl">
+            <div className={`absolute top-7 left-3 rounded-md p-4 w-80 max-h-96 overflow-y-auto shadow-2xl z-50 ${isDark ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-300'}`}>
               {notifications.length === 0 ? (
                 <div className="text-center text-gray-500">
                   <p className="text-sm text-black font-semibold">No notifications 😊</p>
@@ -312,10 +372,10 @@ const Sidebar = () => {
                   {notifications.map((notification) => (
                     <li
                       key={notification._id}
-                      className={`flex items-center space-x-3 p-2 rounded-lg 
+                      className={`flex items-center space-x-3 p-2 rounded-lg  cursor-pointer
                         ${!notification.isRead
-                          ? 'bg-blue-50 border-l-4 border-blue-500'
-                          : 'hover:bg-gray-100'
+                          ? isDark ? 'bg-gray-700' : 'bg-blue-50 border-l-4 border-blue-500'
+                          : isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-200'
                         }`}
                     >
 
@@ -337,11 +397,39 @@ const Sidebar = () => {
             </div>
           )}
         </li>
-        <li className="mb-10">
-          <button className="text-sm" onClick={handleLogout}>Log out</button>
-        </li>
       </ul>
-      <IoMdSettings className="hover:text-blue-300 duration-300 flex-1 text-2xl" />
+      <div className="mb-10 relative">
+        <IoMdSettings
+          className="hover:text-blue-300 duration-300 flex-1 text-2xl"
+          onClick={handleSettingsClick}
+        />
+        {showSettings && (
+          <div
+            ref={dropdownRef}
+            className={`absolute bottom-10 left-8 rounded-lg shadow-xl p-3 w-40 ${isDark ? 'bg-gray-700' : 'bg-white'}`}
+          >
+            <ul className="space-y-3">
+              <li
+                className={`flex items-center space-x-2 ${isDark ? 'hover:bg-gray-500' : 'hover:bg-gray-100'} p-2 rounded-lg cursor-pointer`}
+                onClick={toggleTheme}
+              >
+                {isDark ? <IoSunnyOutline className="text-lg" /> : <FaMoon className="text-lg" />}
+                <span className="text-sm">
+                  {isDark ? 'Light Mode' : 'Dark Mode'}
+                </span>
+              </li>
+              <li
+                className={`flex items-center space-x-3 p-2 rounded-lg ${isDark ? 'hover:bg-gray-500' : 'hover:bg-gray-100'}  cursor-pointer`}
+                onClick={handleLogout}
+              >
+                <CiLogout className='text-lg' />
+                <span className="text-sm">Log out</span>
+              </li>
+            </ul>
+          </div>
+        )}
+
+      </div>
     </div>
   );
 };

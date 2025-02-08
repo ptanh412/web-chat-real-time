@@ -14,6 +14,8 @@ import MessageReactions from "./MessageReaction";
 import { MdOutlineEmojiEmotions } from "react-icons/md";
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaImage, FaVideo, FaFilePdf, FaFileWord, FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFile, FaDownload } from "react-icons/fa";
+import { useTheme } from "../context/ThemeContext.js";
+import ImagePreviewModal from "./ImgaePreviewModal.js";
 
 
 const FilePreviewItem = ({ file, onRemove, uploadProgress }) => {
@@ -69,6 +71,7 @@ const REACTIONS = [
     { emoji: '😢', name: 'cry' }
 ];
 const ChatWindow = ({ conversation, currentUser }) => {
+    const { isDark } = useTheme();
     const { socket } = useUser();
     const { showAlert } = useContext(AlertContext);
     const messagesEndRef = useRef(null);
@@ -89,12 +92,54 @@ const ChatWindow = ({ conversation, currentUser }) => {
     const [showReactions, setShowReactions] = useState(false);
     const [activeMessageId, setActiveMessageId] = useState(null);
     const fileInputRef = useRef(null);
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
     const popoverRef = useRef(null);
+    const [friendIds, setFriendIds] = useState([]);
+    const [showAddFriendButton, setShowAddFriendButton] = useState(true);
+    const [buttonText, setButtonText] = useState('Add Friend');
+    const [localConversation, setLocalConversation] = useState(conversation);
+    const [buttonState, setButtonState] = useState('add');
+    const [selectedImage, setSelectedImage] = useState(null);
 
-    useEffect(scrollToBottom, [messages]);
+
+    useEffect(() => {
+        const getFriendList = async () => {
+            if (!currentUser) return;
+            try {
+                const response = await axios.get(`http://localhost:5000/api/friends/friendList`, {
+                    headers: {
+                        Authorization: `Bearer ${currentUser.token}`,
+                    }
+                });
+                const acceptedFriendIds = response.data.data
+                    .filter(friendship => friendship.status === 'accepted')
+                    .map(friendship =>
+                        friendship.requester._id === currentUser._id
+                            ? friendship.recipient._id
+                            : friendship.requester._id
+                    );
+                setFriendIds(acceptedFriendIds);
+            } catch (error) {
+                console.log("Get friends failed: ", error);
+            }
+        }
+        getFriendList();
+    }, [currentUser]);
+
+    // Improved scroll to bottom function with smooth behavior
+    const scrollToBottom = useCallback(() => {
+        if (messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({
+                behavior: 'smooth',
+                block: 'end',
+            });
+        }
+    }, []);
+
+
+    useEffect(() => {
+        const timeoutId = setTimeout(scrollToBottom, 100);
+        return () => clearTimeout(timeoutId);
+    }, [messages]);
     useEffect(() => {
         const handleClickOutside = (event) => {
             if (popoverRef.current && !popoverRef.current.contains(event.target)) {
@@ -121,6 +166,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             const otherParticipant = conversation.otherParticipant;
 
             if (otherParticipant) {
+                const isFriend = friendIds.includes(otherParticipant._id);
                 setOtherParticipant(otherParticipant);
                 setConversationHeader({
                     title: otherParticipant.name || 'Unknown Contact',
@@ -128,7 +174,8 @@ const ChatWindow = ({ conversation, currentUser }) => {
                         ? 'Online'
                         : `Active ${fomatLastActive(otherParticipant.lastActive, otherParticipant.status)}`,
                     avatar: otherParticipant.avatar || img1,
-                    subtitleColor: otherParticipant.status === 'online' ? 'green' : 'gray'
+                    subtitleColor: otherParticipant.status === 'online' ? 'green' : 'gray',
+                    isFriend: isFriend
                 });
             }
         } else if (conversation.type === 'group') {
@@ -136,10 +183,10 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 title: conversation.name || 'Group',
                 subtitle: `${conversation.participants?.length || 0} members`,
                 avatar: conversation.avatarGroup,
-                subtitleColor: 'gray'
+                subtitleColor: 'green'
             });
         }
-    }, [conversation]);
+    }, [conversation, friendIds]);
 
     const handleUserStatusChange = useCallback((user) => {
         if (conversation?.participants?.some(p => p._id === user._id)) {
@@ -175,17 +222,71 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.off('user:online', handleUserStatusChange);
             socket.off('user:offline', handleUserStatusChange);
         };
-    }, [socket, handleUserStatusChange, conversation?._id]); // Thêm conversation?._id
+    }, [socket, handleUserStatusChange, conversation?._id]);
 
     useEffect(() => {
         setMessages([]);
-
         if (socket && conversation?._id) {
             const conversationId = conversation._id.toString();
             socket.emit('get:messages', conversationId);
             socket.emit('mark:conversation-read', conversationId);
         }
     }, [conversation?._id, socket])
+
+
+    useEffect(() => {
+        if (!socket || !conversation) return;
+
+        const conversationId = conversation._id.toString();
+
+        const handleMessageStatusUpdate = (updatedMessages) => {
+            setMessages(prev =>
+                prev.map(msg => {
+                    const updatedMsg = updatedMessages.find(
+                        u => u._id === msg._id &&
+                            u.conversationId === conversation._id
+                    );
+                    if (updatedMsg) {
+                        return {
+                            ...msg,
+                            status: updatedMsg.status,
+                            readAt: updatedMsg.readAt,
+                            readBy: updatedMsg.readBy
+                        };
+                    }
+                    return msg;
+                })
+            );
+        };
+
+        socket.on('message:status-updated', handleMessageStatusUpdate);
+
+        const handleNewMessage = (newMessage) => {
+            if (
+                newMessage.conversationId === conversationId &&
+                newMessage.sender._id !== currentUser._id
+            ) {
+                socket.emit('message:read', conversationId);
+            }
+        };
+
+        socket.on('new:message', handleNewMessage);
+
+
+        return () => {
+            socket.off('message:status-updated', handleMessageStatusUpdate);
+            socket.off('new:message', handleNewMessage);
+        };
+    }, [socket, conversation?._id, currentUser._id]);
+
+    const getPersonalizedContent = useCallback((message) => {
+        if (!message || !currentUser) return message?.content;
+
+        const personalizedMsg = message.personalizedContent?.find(
+            pc => pc.userId.toString() === currentUser._id.toString()
+        );
+        return personalizedMsg?.content || message.content;
+    }, [currentUser]);
 
     useEffect(() => {
         if (!socket || !conversation) return;
@@ -194,49 +295,76 @@ const ChatWindow = ({ conversation, currentUser }) => {
 
         socket.emit('join:conversation', conversationId);
 
-        socket.on('messages:list', (allMessages) => {
-            setMessages(allMessages);
-        });
+        const handleMessage = (newMessage) => {
+            if (newMessage.conversationId === conversationId || newMessage.type === 'system') {
 
-        socket.on('new:message', (newMessage) => {
-            if (newMessage.conversationId === conversationId) {
                 setMessages((prevMessages) => {
-                    const isMessagExist = prevMessages.some(
-                        msg => msg._id === newMessage._id
-                    );
-                    const filteredMessages = prevMessages.filter(
-                        msg => !(msg.isTemp && msg.content === newMessage.content)
-                    );
-                    if (newMessage.sender._id !== currentUser._id) {
-                        socket.emit('message:delivered', newMessage._id);
-                    }
-                    return isMessagExist
-                        ? filteredMessages
-                        : [...filteredMessages, newMessage];
-                })
+
+                    const updatedMessage = {
+                        ...newMessage,
+                        _id: newMessage._id || new Date().getTime().toString(),
+                        content: getPersonalizedContent(newMessage),
+                        sender: newMessage.sender,
+                        createdAt: newMessage.createdAt || new Date(),
+                        conversationId: newMessage.conversationId,
+                        type: newMessage.type || (newMessage.isSystemMessage ? 'system' : 'text'),
+                        isSystemMessage: newMessage.type === 'system' || newMessage.isSystemMessage
+                    };
+
+                    const newMessages = [...prevMessages, updatedMessage];
+                    setTimeout(scrollToBottom, 100);
+                    return newMessages;
+                });
             }
+        };
+
+        socket.on('messages:list', (allMessages) => {
+            setMessages(allMessages.map(msg => ({
+                ...msg,
+                content: getPersonalizedContent(msg),
+                isSystemMessage: msg.type === 'system' || msg.isSystemMessage
+            })));
+            setTimeout(scrollToBottom, 100);
         });
 
-        socket.on('user:online', handleUserStatusChange);
+        socket.on('new:message', handleMessage);
 
-        socket.on('message:status-updated', (updatedMessage) => {
-            setMessages(prevMessages =>
-                prevMessages.map(msg =>
-                    msg._id === updatedMessage._id
-                        ? { ...msg, status: 'read', readAt: updatedMessage.readAt }
-                        : msg
-                )
-            );
-        });
+        const handleGroupUpdate = (updatedGroup) => {
+            if (updatedGroup._id === conversation._id) {
+                console.log('Group updated:', updatedGroup);
+                setConversationHeader(prev => ({
+                    ...prev,
+                    subtitle: updatedGroup.participants
+                        ? `${updatedGroup.participants.length} members`
+                        : prev.subtitle,
+                    title: updatedGroup.name,
+                    avatar: updatedGroup.avatarGroup
+                }));
 
+                if (updatedGroup.lastMessage) {
+                    const personalizedContent = getPersonalizedContent(updatedGroup.lastMessage);
+                    setLocalConversation(prev => ({
+                        ...prev,
+                        ...updatedGroup,
+                        lastMessage: {
+                            ...updatedGroup.lastMessage,
+                            content: personalizedContent
+                        }
+                    }))
+                }
+            }
+        };
+
+        socket.on('group:updated', handleGroupUpdate);
+
+        // Cleanup
         return () => {
-            socket.off('new:message');
             socket.off('messages:list');
-            socket.off('message:status-updated');
+            socket.off('new:message', handleMessage);
+            socket.off('group:updated', handleGroupUpdate);
             socket.emit('leave:conversation', conversationId);
-            socket.off('user:online', handleUserStatusChange);
-        }
-    }, [socket, conversation?._id, currentUser, handleUserStatusChange]);
+        };
+    }, [socket, conversation?._id, scrollToBottom]);
 
     useEffect(() => {
         if (!socket) return;
@@ -245,7 +373,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             setMessages(prevMessages =>
                 prevMessages.map(msg => {
                     if (msg._id === messageId) {
-                        return { ...msg, reactions }; // Sử dụng hoàn toàn dữ liệu từ server
+                        return { ...msg, reactions };
                     }
                     return msg;
                 })
@@ -256,24 +384,28 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.off('message:reaction-updated');
         };
     }, [socket]);
+
     const handleReaction = (messageId, emoji) => {
         if (!socket) return;
         socket.emit('message:react', { messageId, emoji });
     }
+
     const handleRemoveReaction = (emoji, messageId) => {
         if (!socket) return;
         socket.emit('message:remove-reaction', { messageId, emoji });
     }
+
+
     useEffect(() => {
         if (!socket || !conversation?._id) return;
         const unreadMessages = messages
             .filter(msg => msg.sender._id !== currentUser._id && msg.status !== 'read')
             .map(msg => msg._id);
 
-        if (unreadMessages.length > 0 && conversation?._id) {
+        if (unreadMessages.length > 0) {
             socket.emit('message:read', conversation._id);
         }
-    }, [messages, conversation?._id, currentUser._id]);
+    }, [messages, conversation?._id, currentUser._id, socket]);
 
     useEffect(() => {
         if (!socket) return;
@@ -292,32 +424,6 @@ const ChatWindow = ({ conversation, currentUser }) => {
             socket.off('message:recalled');
         };
     }, [socket]);
-
-    useEffect(() => {
-        if (!socket || !conversation?._id) return;
-        const handleMessageStatusUpdate = (updatedMessages) => {
-            if (Array.isArray(updatedMessages)) {
-                setMessages(prevMessages =>
-                    prevMessages.map(msg => {
-                        const updatedMsg = updatedMessages.find(
-                            u => u._id === msg._id &&
-                                u.conversationId === conversation?._id
-                        );
-
-                        return updatedMsg
-                            ? { ...msg, status: 'read', readAt: updatedMsg.readAt }
-                            : msg;
-                    })
-                );
-            }
-        };
-
-        socket.on('message:status-updated', handleMessageStatusUpdate);
-
-        return () => {
-            socket.off('message:status-updated', handleMessageStatusUpdate);
-        };
-    }, [socket, conversation?._id]);
 
     const handlFileUpload = async (e) => {
         const files = Array.from(e.target.files);
@@ -354,9 +460,13 @@ const ChatWindow = ({ conversation, currentUser }) => {
         setUploadProgress(progressMap);
 
         try {
+
+            const token = localStorage.getItem('token');
+
             const response = await axios.post("http://localhost:5000/api/upload/multiple", formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
+                    'Authorization': `Bearer ${token}`
                 },
                 // timeout: 30000,
                 onUploadProgress: (progressEvent) => {
@@ -436,7 +546,8 @@ const ChatWindow = ({ conversation, currentUser }) => {
             tempId: Date.now().toString(),
             conversationId: conversation._id,
             status: 'sending',
-            createdAt: new Date()
+            createdAt: new Date(),
+            replyTo: replyingTo ? replyingTo._id : null,
         }
         if (uploadFiles.length > 0) {
             uploadFiles.forEach(file => {
@@ -485,7 +596,10 @@ const ChatWindow = ({ conversation, currentUser }) => {
 
                 setMessages((prevMessages) =>
                     prevMessages.map((msg) =>
-                        msg.tempId === messageToSend.tempId ? serverMessage : msg
+                        msg.tempId === messageToSend.tempId ? {
+                            ...serverMessage,
+                            replyTo: replyingTo?._id,
+                        } : msg
                     )
                 );
             }
@@ -495,12 +609,12 @@ const ChatWindow = ({ conversation, currentUser }) => {
         setPreviews([]);
         setUploadProgress({});
         setNewMessage('');
-
-
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     };
+
+
     useEffect(() => {
         if (!socket) return;
 
@@ -553,10 +667,16 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     const messageExist = prev.some(msg => msg._id === newMessage._id);
                     if (messageExist) {
                         return prev.map(msg =>
-                            msg._id === newMessage._id ? newMessage : msg
+                            msg._id === newMessage._id ? {
+                                ...newMessage,
+                                replyTo: msg.replyTo || newMessage.replyTo
+                            } : msg
                         );
                     }
-                    return [...prev, newMessage];
+                    return [...prev, {
+                        ...newMessage,
+                        replyTo: newMessage.replyTo
+                    }];
                 })
             }
         }
@@ -639,12 +759,13 @@ const ChatWindow = ({ conversation, currentUser }) => {
         if (!repliedMessage) return null;
 
         return (
-            <div className="bg-gray-100 p-2 rounded-t-lg text-sm text-gray-600 border-l-2 border-blue-500">
+            <div className={`p-2 rounded-t-lg text-sm text-gray-600 border-l-2 border-blue-500 ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-100'}`}>
                 <div className="font-semibold">{repliedMessage.sender.name}</div>
                 <div className="truncate">{repliedMessage.content}</div>
             </div>
         )
     }
+
     const getFileIcon = (fileType) => {
         const iconMap = {
             'image': <div className="bg-blue-500 text-white p-3 rounded-lg"><FaImage className="text-3xl" /></div>,
@@ -658,8 +779,23 @@ const ChatWindow = ({ conversation, currentUser }) => {
         };
         return iconMap[fileType] || iconMap.other;
     };
-    
+
+    const renderSystemMessge = (message) => {
+        const messageContent = getPersonalizedContent(message);
+        return (
+            <div key={message._id} className="flex justify-center my-4">
+                <div className={`px-4 py-2 rounded-full text-sm ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+                    {messageContent}
+                </div>
+            </div>
+        )
+    }
+
+
     const renderMessage = (msg, index) => {
+        if (msg.type === 'system' || msg.isSystemMessage) {
+            return renderSystemMessge(msg);
+        }
         const isOwnMessage = msg.sender._id === currentUser._id;
         return (
             <div
@@ -674,27 +810,45 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     )}
 
                     <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity
-                        ${isOwnMessage ? 'right-full mr-2' : 'left-full ml-2'} 
-                        flex items-center space-x-2 bg-white rounded-lg shadow p-1`}>
-                        <button
-                            onClick={() => handleEmojiClick(msg._id)}
-                            className="p-1.5 rounded-full hover:bg-gray-100"
-                        >
-                            <MdOutlineEmojiEmotions className="w-3 h-3 text-gray-500" />
-                        </button>
-                        <button
-                            onClick={() => handleReply(msg)}
-                            className="p-1.5 rounded-full hover:bg-gray-100"
-                        >
-                            <FaReply className="w-3 h-3 text-gray-500" />
-                        </button>
+                    ${isOwnMessage ? 'right-full mr-2' : 'left-full ml-2'} 
+                    flex items-center space-x-2 bg-white rounded-lg shadow p-1`}>
                         {isOwnMessage && !msg.isRecalled && (
-                            <button
-                                onClick={() => handleRecall(msg)}
-                                className="p-1.5 rounded-full hover:bg-gray-100"
-                            >
-                                <FaTrash className="w-3 h-3 text-gray-500" />
-                            </button>
+                            <>
+                                <button
+                                    onClick={() => handleEmojiClick(msg._id)}
+                                    className="p-1.5 rounded-full hover:bg-gray-100"
+                                >
+                                    <MdOutlineEmojiEmotions className="w-3 h-3 text-gray-500" />
+                                </button>
+                                <button
+                                    onClick={() => handleReply(msg)}
+                                    className="p-1.5 rounded-full hover:bg-gray-100"
+                                >
+                                    <FaReply className="w-3 h-3 text-gray-500" />
+                                </button>
+                                <button
+                                    onClick={() => handleRecall(msg)}
+                                    className="p-1.5 rounded-full hover:bg-gray-100"
+                                >
+                                    <FaTrash className="w-3 h-3 text-gray-500" />
+                                </button>
+                            </>
+                        )}
+                        {!isOwnMessage && !msg.isRecalled && (
+                            <>
+                                <button
+                                    onClick={() => handleEmojiClick(msg._id)}
+                                    className="p-1.5 rounded-full hover:bg-gray-100"
+                                >
+                                    <MdOutlineEmojiEmotions className="w-3 h-3 text-gray-500" />
+                                </button>
+                                <button
+                                    onClick={() => handleReply(msg)}
+                                    className="p-1.5 rounded-full hover:bg-gray-100"
+                                >
+                                    <FaReply className="w-3 h-3 text-gray-500" />
+                                </button>
+                            </>
                         )}
                     </div>
 
@@ -703,7 +857,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
                             <img
                                 src={msg.sender.avatar}
                                 alt={msg.sender.name}
-                                className="rounded-full w-8 h-8 mr-3"
+                                className="rounded-full w-8 h-8 mr-3 flex-shrink-0"
                             />
                         )}
 
@@ -711,29 +865,45 @@ const ChatWindow = ({ conversation, currentUser }) => {
                             {renderReplyPreview(msg)}
 
                             <div className={`p-3 rounded-lg ${msg.isRecalled
-                                ? 'bg-gray-200'
+                                ? isDark ? 'bg-gray-500' : 'bg-gray-200'
                                 : isOwnMessage
                                     ? (msg.type === 'text' ? 'bg-blue-500 text-white' : '')
-                                    : 'bg-gray-200'
+                                    : isDark ? 'bg-gray-700' : 'bg-gray-200'
                                 }`}>
-                                {msg.isRecalled ? (
-                                    msg.recallType === 'everyone' ? (
-                                        isOwnMessage ? (
-                                            <span className="text-gray-500 italic">You have recalled</span>
+                                <div className="break-words whitespace-pre-line">
+                                    {msg.isRecalled ? (
+                                        msg.recallType === 'everyone' ? (
+                                            isOwnMessage ? (
+                                                <span className={`${isDark ? 'text-white' : 'text-gray-500'} italic`}>You have recalled</span>
+                                            ) : (
+                                                <span className={`${isDark ? 'text-white' : 'text-gray-500'} italic`}>{msg.sender.name} has recalled</span>
+                                            )
+                                        ) : msg.recallType === 'self' && isOwnMessage ? (
+                                            <span className={`${isDark ? 'text-white' : 'text-gray-500'} italic`}>You have recalled</span>
                                         ) : (
-                                            <span className="text-gray-500 italic">{msg.sender.name} has recalled</span>
+                                            <div className="break-all">
+                                                {renderMessageContent(msg)}
+                                            </div>
                                         )
-                                    ) : msg.recallType === 'self' && isOwnMessage ? (
-                                        <span className="text-gray-500 italic">You have recalled</span>
                                     ) : (
-                                        renderMessageContent(msg) // Hiển thị tin nhắn gốc cho người nhận
-                                    )
-                                ) : (
-                                    renderMessageContent(msg) // Hiển thị tin nhắn gốc nếu chưa thu hồi
-                                )}
+                                        <div className="break-all">
+                                            {renderMessageContent(msg)}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className={`absolute mt-1 ${isOwnMessage ? (
+                                msg.reactions.length === 1 ? 'top-8 -left-4' : 'top-9 -left-6'
+                            ) : 'top-7 -right-3'}`}>
+                                <MessageReactions
+                                    message={msg}
+                                    currentUser={currentUser}
+                                    onReact={(emoji) => handleReaction(msg._id, emoji)}
+                                    existingReactions={msg.reactions || []}
+                                    onRemoveReaction={(emoji) => handleRemoveReaction(emoji, msg._id)}
+                                />
                             </div>
 
-                            {/* Emoji Reaction Popup */}
                             <AnimatePresence>
                                 {showReactions && activeMessageId === msg._id && (
                                     <motion.div
@@ -765,60 +935,71 @@ const ChatWindow = ({ conversation, currentUser }) => {
                             <img
                                 src={currentUser.avatar}
                                 alt="You"
-                                className="rounded-full w-8 h-8 ml-3"
+                                className="rounded-full w-8 h-8 ml-3 flex-shrink-0"
                             />
                         )}
                     </div>
-
-                    {/* Reactions display */}
-                    <div className={`flex mt-1 ${isOwnMessage ? 'justify-start' : 'justify-end'}`}>
-                        <MessageReactions
-                            message={msg}
-                            currentUser={currentUser}
-                            onReact={(emoji) => handleReaction(msg._id, emoji)}
-                            existingReactions={msg.reactions || []}
-                            onRemoveReaction={(emoji) => handleRemoveReaction(emoji, msg._id)}
-                        />
-                    </div>
-
-                    <div className="relative h-4 w-28">
-                        <div className="absolute">
+                    {isOwnMessage && index === messages.length - 1 && (
+                        <div className="flex justify-end mt-1 mr-10">
                             {renderMessageStatus(msg, index === messages.length - 1)}
                         </div>
-                    </div>
+                    )}
                 </div>
             </div>
         );
     };
+
+    const isImageFile = (fileType) => {
+        return fileType === 'image';
+    }
+
+
+    const handleFileClick = (file) => {
+        if (isImageFile(file.fileType)) {
+            setSelectedImage({
+                url: file.fileUrl,
+                fileName: file.fileName
+            })
+        }
+    }
+
     const renderMessageContent = (message) => {
+        const truncateFileName = (fileName, maxLength = 30) => {
+            if (fileName.length <= maxLength) return fileName;
+
+            const extension = fileName.split('.').pop();
+            const nameWithoutExt = fileName.slice(0, fileName.lastIndexOf('.'));
+
+            const truncatedName = nameWithoutExt.slice(0, maxLength - extension.length - 4);
+
+            return `${truncatedName}...${extension}`;
+        }
         if (message.type === 'multimedia' && message.attachments && message.attachments.length > 0) {
             return (
-                <div className="">
+                <div className="max-w-full">
                     {message.attachments.map((file, index) => {
                         switch (file.fileType) {
                             case 'image':
                                 return (
-                                    <div key={index}>
+                                    <div
+                                        key={index}
+                                        className="max-w-full cursor-pointer"
+                                        onClick={() => handleFileClick(file)}
+                                    >
                                         <img
                                             src={file.fileUrl}
                                             alt={file.fileName}
                                             className="h-44 w-60 rounded-t-lg mt-2"
+                                            onContextMenu={(e) => e.preventDefault()}
+                                            onError={(e) => {
+                                                console.error('Image failed to load:', file.fileUrl); 
+                                                e.target.style.display = 'none'; 
+                                            }}
                                         />
-                                        {message.content && <p className="text-sm bg-blue-500 text-white w-full text-end py-1 px-3 rounded-b-lg">{message.content}</p>}
+                                        {message.content && <p className="text-sm bg-blue-500 text-white w-full text-end py-1 px-3 rounded-b-lg break-words">{message.content}</p>}
                                     </div>
                                 );
-                            // case 'pdf':
-                            //     return (
-                            //         <a
-                            //             key={index}
-                            //             href={file.fileUrl}
-                            //             target="_blank"
-                            //             rel="noreferrer"
-                            //             className="flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 text-black"
-                            //         >
-                            //             {file.fileName}
-                            //         </a>
-                            //     );
+
                             default:
                                 return (
                                     <a
@@ -826,13 +1007,20 @@ const ChatWindow = ({ conversation, currentUser }) => {
                                         href={file.fileUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 text-black"
+                                        className={`flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 max-w-full text-black ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-100'}`}
+                                        title={file.fileName}
+                                        // onClick={(e) => {
+                                        //     e.preventDefault();
+                                        //     window.open(file.fileUrl, '_blank', 'noopener,noreferrer');
+                                        // }}
                                     >
-                                        <div className="items-center flex justify-center">
+                                        <div className="flex items-center w-full overflow-hidden">
                                             <div className="mr-2">
                                                 {getFileIcon(file?.fileType)}
                                             </div>
-                                            <p className="text-[14px] font-semibold py-1 rounded-xl">{file.fileName}</p>
+                                            <p className="text-[14px] font-semibold py-1 rounded-xl truncate">
+                                                {truncateFileName(file.fileName)}
+                                            </p>
                                         </div>
                                     </a>
                                 );
@@ -841,8 +1029,13 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 </div>
             );
         }
-        return <p className="text-sm">{message.content}</p>;
+        return (
+            <div className="max-w-full">
+                <p className="text-sm break-words whitespace-pre-wrap">{message.content}</p>
+            </div>
+        );
     };
+
     const formatMessageTime = (timestamp) => {
         if (!timestamp) return '';
         const date = new Date(timestamp);
@@ -855,8 +1048,8 @@ const ChatWindow = ({ conversation, currentUser }) => {
     const renderMessageStatus = (message, isLastMessage) => {
         if (!isLastMessage || message.sender._id !== currentUser._id) return null;
         const statusColors = {
-            read: 'text-gray-400',
-            delivered: 'text-blue-500',
+            read: 'text-gray-500',
+            delivered: 'text-gray-500',
             sent: 'text-gray-500'
         };
 
@@ -872,6 +1065,61 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     <IoIosCheckmark className="text-xl" />
                     {statusText[message.status]}
                     {message.status !== 'sent' && ` at ${formatMessageTime(message.readAt || message.deliveredAt || message.sentAt)}`}
+                </div>
+            );
+        }
+        if (conversation.type === 'group') {
+            const readByUsers = message.readBy || [];
+
+            const readByOthers = readByUsers.filter(read =>
+                read.user._id !== currentUser._id &&
+                read.user._id !== message.sender._id
+            );
+
+            if (readByOthers.length === 0) {
+                return (
+                    <div className={`text-xs font-serif ${statusColors['sent']} flex items-center`}>
+                        <IoIosCheckmark className="text-xl" />
+                        Sent
+                    </div>
+                )
+            }
+
+            const firstReaders = readByOthers.slice(0, 2);
+            const remainingCounts = readByOthers.length - 2;
+
+            const readerName = firstReaders
+                .map(read => read.user.name)
+                .filter(Boolean)
+                .join(', ');
+
+            if (!readerName) {
+                return (
+                    <div className={`text-xs font-serif ${statusColors['sent']} flex items-center`}>
+                        <IoIosCheckmark className="text-xl" />
+                        Sent
+                    </div>
+                );
+            }
+
+            return (
+                <div className={`text-xs font-serif ${statusColors['read']} flex items-center`}>
+                    <IoIosCheckmark className="text-xl" />
+                    Read by {readerName}
+                    {remainingCounts > 0 ? ` and ${remainingCounts} others` : ''}
+                    {` at ${formatMessageTime(readByOthers[0].readAt)}`}
+                </div>
+            )
+        }
+        const readByOthers = (message.readBy || []).filter(read =>
+            read.user._id !== currentUser._id &&
+            read.user._id !== message.sender._id
+        );
+        if (readByOthers.length === 0) {
+            return (
+                <div className={`text-xs font-serif ${statusColors['sent']} flex items-center`}>
+                    <IoIosCheckmark className="text-xl" />
+                    Sent
                 </div>
             );
         }
@@ -899,9 +1147,80 @@ const ChatWindow = ({ conversation, currentUser }) => {
         return `${days} days ago`;
     };
 
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleConversationUpdated = (updatedConversation) => {
+            if (localConversation?._id === updatedConversation._id) {
+                setLocalConversation(prev => ({
+                    ...prev,
+                    ...updatedConversation
+                }));
+            }
+        };
+
+        socket.on('conversation:updated', handleConversationUpdated);
+
+        socket.on('friendRequestSent', () => {
+            setLocalConversation(prev => ({
+                ...prev,
+                friendRequestStatus: 'pending',
+                isFriendshipPending: true
+            }));
+            setShowAddFriendButton(true);
+            setButtonText('Recall request');
+            showAlert('Friend request sent', 'success');
+        });
+
+        socket.on('friendRequestCancelled', () => {
+            setLocalConversation(prev => ({
+                ...prev,
+                friendRequestStatus: 'recalled',
+                isFriendshipPending: true
+            }));
+
+            setShowAddFriendButton(true);
+            setButtonText('Add friend');
+            showAlert('Friend request cancelled', 'success');
+        });
+
+        return () => {
+            socket.off('conversation:updated', handleConversationUpdated);
+            socket.off('friendRequestSent');
+            socket.off('friendRequestCancelled');
+        };
+    }, [socket, localConversation, showAlert]);
+
+    useEffect(() => {
+        if (conversation.isFriendshipPending) {
+            setButtonState(
+                conversation.friendRequestStatus === 'pending' ? 'recall' : 'add'
+            )
+        }
+    }, [conversation]);
+
+    const handleAddFriend = (friendId) => {
+        if (socket) {
+
+            if (buttonState === 'recall') {
+                socket.emit('cancelFriendRequest', {
+                    requesterId: currentUser._id,
+                    recipientId: friendId,
+                })
+                setButtonState('add');
+            } else {
+                socket.emit('sendFriendRequest', {
+                    requesterId: currentUser._id,
+                    recipientId: friendId,
+                })
+                setButtonState('recall');
+            }
+        }
+    }
+
     return (
-        <div className="h-full flex flex-col">
-            <div className=" py-2 flex space-x-10 px-5 flex-none mt-3 border-b-2 border-gray-300">
+        <div className={`h-full flex flex-col rounded-lg ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+            <div className={`py-2 flex space-x-10 px-5 flex-none items-center justify-between mt-3 border-b-2 ${isDark ? 'border-gray-700' : 'border-gray-300'}`}>
                 <div className="flex space-x-4">
                     <img
                         src={conversationHeader.avatar}
@@ -916,27 +1235,42 @@ const ChatWindow = ({ conversation, currentUser }) => {
                             <p className="text-xs">
                                 <div className="flex items-center">
                                     <GoDotFill className={`text-${conversationHeader.subtitleColor}-500`} />
-                                    <span className="">{conversationHeader.subtitle}</span>
+                                    <span>{conversationHeader.subtitle}</span>
                                 </div>
                             </p>
                         </div>
                     </div>
                 </div>
+                {conversation.type === 'private' && showAddFriendButton &&
+                    conversation.isFriendshipPending ?
+                    (
+                        <button
+                            className={`text-white rounded-lg px-2 text-sm font-semibold ${buttonState === 'recall'
+                                ? "bg-red-400 hover:bg-red-300 transition-colors duration-300"
+                                : "bg-blue-400 hover:bg-blue-300 transition-colors duration-300"
+                                }`}
+                            onClick={() => handleAddFriend(conversation.otherParticipant._id)}
+                        >
+                            {buttonState === 'recall' ? 'Recall request' : 'Add friend'}
+                        </button>
+                    )
+                    : null}
 
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4" style={{ height: 'auto' }}>
                 <div className="space-y-4">
                     {messages.map((msg, index) => renderMessage(msg, index))}
-                    <div ref={messagesEndRef} />
                 </div>
+                <div ref={messagesEndRef} />
+
             </div>
             {replyingTo && (
-                <div className="px-4 py-2 bg-gray-100 flex items-center justify-between">
+                <div className={`px-4 py-2  flex items-center justify-between ${isDark ? 'bg-gray-700' : 'bg-gray-100'}`}>
                     <div className="flex flex-col">
                         <span className="text-sm font-semibold">
                             Replying to {replyingTo.sender.name}
                         </span>
-                        <span className="text-sm text-gray-600 truncate">
+                        <span className={`text-sm text-gray-700 truncate ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                             {replyingTo.content}
                         </span>
                     </div>
@@ -977,7 +1311,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
                 </label>
                 <input
                     type="text"
-                    className="bg-gray-200 w-full p-2 rounded-lg focus:outline-none"
+                    className={`${isDark ? 'bg-gray-600' : 'bg-slate-100'} w-full p-2 rounded-lg focus:outline-none`}
                     placeholder="Type a message..."
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
@@ -1014,6 +1348,12 @@ const ChatWindow = ({ conversation, currentUser }) => {
                     </div>
                 </DialogContent>
             </Dialog>
+            <ImagePreviewModal
+                isOpen={!!selectedImage}
+                onClose={() => setSelectedImage(null)}
+                imageUrl={selectedImage?.url}
+                fileName={selectedImage?.fileName}
+            />
         </div>
     );
 };

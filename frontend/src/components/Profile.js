@@ -6,7 +6,9 @@ import axios from 'axios';
 import { AlertContext } from '../context/AlertMessage';
 import { CiCamera } from "react-icons/ci";
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../context/ThemeContext';
 const Conversations = () => {
+	const {isDark} = useTheme();
 	const [conversations, setConversations] = useState([]);
 	const { user, socket } = useUser();
 	const navigate = useNavigate();
@@ -56,7 +58,7 @@ const Conversations = () => {
 				{conversations.slice(0, 6).map((conversation) => (
 					<div
 						key={conversation._id}
-						className="flex items-center justify-between p-4 bg-gray-50 rounded-lg w-full"
+						className={`flex items-center justify-between p-4 rounded-lg w-full ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}
 					>
 						<div className="flex items-center space-x-3">
 							<img
@@ -94,6 +96,7 @@ const Conversations = () => {
 	);
 }
 const Profile = () => {
+	const {isDark} = useTheme();
 	const { user, updateUser } = useUser();
 	const [isUploading, setIsUploading] = useState(false);
 	const [showChangePassword, setShowChangePassword] = useState(false);
@@ -233,6 +236,7 @@ const Profile = () => {
 
 	const EditableField = ({ field, label }) => {
 		const inputRef = useRef(null);
+		const {isDark} = useTheme();
 
 		useEffect(() => {
 			if (editStates[field] && inputRef.current) {
@@ -261,7 +265,7 @@ const Profile = () => {
 								...prev,
 								[field]: e.target.value
 							}))}
-							className='border rounded-lg border-gray-300 px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 w-96'
+							className={`border rounded-lg border-gray-300 px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 w-96 ${isDark ? 'bg-gray-800' : 'bg-white'}`}
 						/>
 						<button
 							onClick={() => handleSave(field)}
@@ -285,7 +289,7 @@ const Profile = () => {
 		)
 	}
 	return (
-		<div className="p-20 shadow-lg bg-white rounded-lg w-full">
+		<div className={`p-20 shadow-lg rounded-lg w-full ${isDark ? 'bg-gray-800 ': 'bg-white'}`}>
 			<h1 className="text-4xl font-bold mb-6 ">Profile</h1>
 			<div className='border-b-2 mb-3'></div>
 			<div className='flex justify-between items-center mb-6'>
@@ -299,7 +303,7 @@ const Profile = () => {
 									onClick={handleUploadClick}
 									disabled={isUploading}
 								>
-									<CiCamera />
+									<CiCamera className={isDark ? 'text-black' : ''} />
 								</button>
 								<input
 									id="file-input"
@@ -358,6 +362,7 @@ const Profile = () => {
 	)
 }
 const ChangePasswordModal = ({ onClose }) => {
+	const {isDark} = useTheme();
 	const { user } = useUser();
 	const { showAlert } = useContext(AlertContext);
 	const [password, setPassword] = useState({
@@ -403,7 +408,7 @@ const ChangePasswordModal = ({ onClose }) => {
 
 	return (
 		<div className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'>
-			<div className='bg-white px-20 py-10 rounded-lg'>
+			<div className={`px-20 py-10 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-white '}`}>
 				<h2 className='text-2xl font-bold mb-6'>Change Password</h2>
 				<form onSubmit={handlePasswordChange}>
 					<div className='mb-6'>
@@ -411,7 +416,7 @@ const ChangePasswordModal = ({ onClose }) => {
 						<input
 							type="password"
 							id="oldPassword"
-							className='w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2'
+							className={`w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2 ${isDark ? 'bg-gray-800' : 'bg-white'}`}
 							value={password.oldPassword}
 							onChange={(e) => setPassword(
 								prev => ({
@@ -426,7 +431,7 @@ const ChangePasswordModal = ({ onClose }) => {
 						<input
 							type="password"
 							id="newPassword"
-							className='w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2'
+							className={`w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2 ${isDark ? 'bg-gray-800' : 'bg-white'}`}
 							value={password.newPassword}
 							onChange={(e) => setPassword(
 								prev => ({
@@ -441,7 +446,7 @@ const ChangePasswordModal = ({ onClose }) => {
 						<input
 							type="password"
 							id="confirmPassword"
-							className='w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2'
+							className={`w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 mt-2 ${isDark ? 'bg-gray-800' : 'bg-white'}`}
 							value={password.confirmPassword}
 							onChange={(e) => setPassword(
 								prev => ({

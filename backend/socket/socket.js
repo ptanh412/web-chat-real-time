@@ -28,9 +28,18 @@ const setUpSocket = (server) => {
                 socket.disconnect(true);
                 return;
             }
-            console.log(`User ${userId} connected`);
+            // console.log(`User ${userId} connected`);
 
-            socket.join(userId);
+            socket.join(`user:${userId}`);
+
+            const userConversations = await Conversation.find({
+                participants: userId
+            }).select('_id');
+
+            const conversationRooms = userConversations.map(
+                conv => `conversation:${conv._id}`
+            )
+            await socket.join(conversationRooms);
 
             socket.on('getRooms', () => {
                 const rooms = Array.from(socket.rooms);
@@ -39,9 +48,11 @@ const setUpSocket = (server) => {
 
 
             socket.on('joinRoom', (room) => {
-                socket.join(room);
+                if (typeof room === 'string' && room.trim()) {
+                    socket.join(room);
+                    socket.emit('roomsList', Array.from(socket.rooms));
+                }
             });
-            socket.emit('roomsList', Array.from(socket.rooms));
 
             const connectionCount = (onlineUsers.get(userId) || 0) + 1;
             onlineUsers.set(userId, connectionCount);
@@ -168,17 +179,8 @@ const setUpSocket = (server) => {
                 }
             });
 
-            socket.on('create:conversation', async ({ receiverId, content }) => {
+            socket.on('create:conversation', async ({ receiverId, userId, content }, callback) => {
                 try {
-                    const friendship = await Friendships.findOne({
-                        $or: [
-                            { requester: userId, recipient: receiverId, status: 'accepted' },
-                            { requester: receiverId, recipient: userId, status: 'accepted' }
-                        ]
-                    })
-                    if (!friendship) {
-                        throw new Error('Friendship not found');
-                    }
 
                     let conversation = await Conversation.findOne({
                         type: 'private',
@@ -190,8 +192,19 @@ const setUpSocket = (server) => {
                             type: 'private',
                             participants: [userId, receiverId],
                             creator: userId,
+                            isFriendshipPending: true,
+                            friendRequestStatus: 'none',
+                            createdAt: new Date()
                         });
                         await conversation.save();
+                        await conversation.populate({
+                            path: 'participants',
+                            select: 'name avatar status lastActive'
+                        })
+
+                        conversation.participants.forEach(participant => {
+                            io.to(participant._id.toString()).emit('conversation:created', conversation);
+                        });
                     }
 
                     if (content) {
@@ -204,6 +217,33 @@ const setUpSocket = (server) => {
                         await message.save();
                         conversation.lastMessage = message._id;
                         await conversation.save();
+
+                        const updatedConversation = await conversation.populate({
+                            path: 'lastMessage',
+                            populate: {
+                                path: 'sender',
+                                select: 'name avatar status lastActive'
+                            }
+                        })
+                        // io.sockets.sockets.forEach((socket) => {
+                        //     if (socket.user?._id?.toString() === friendship.requester._id.toString()) {
+                        //         socket.emit('friendRequestResponded', {
+                        //             type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
+                        //             notification: requesterNotification.toObject()
+                        //         });
+                        //     }
+                        // });
+
+
+                        // [userId, receiverId].forEach(id => {
+                        //     io.to(id).emit('conversation:updated', updatedConversation);
+                        // });
+
+                        io.sockets.sockets.forEach((socket) => {
+                            if (socket.user?._id?.toString() === userId.toString() || socket.user?._id?.toString() === receiverId.toString()) {
+                                socket.emit('conversation:updated', updatedConversation);
+                            }
+                        });
                     }
 
                     await conversation.populate({
@@ -213,21 +253,27 @@ const setUpSocket = (server) => {
 
                     const enrichedConversation = {
                         _id: conversation._id.toString(),
+                        type: 'private',
                         participants: conversation.participants,
                         lastMessage: conversation.lastMessage || null,
+                        otherParticipant: conversation.participants.find(p => p._id.toString() !== userId.toString()),
+                        isFriendshipPending: conversation.isFriendshipPending || false,
+                        friendRequestStatus: conversation.friendRequestStatus || 'none',
+                        createdAt: conversation.createdAt || new Date(),
                     }
                     console.log('Emitted Conversation:', enrichedConversation);
+
                     [userId, receiverId].forEach(id => {
                         io.to(id).emit('conversation:created', enrichedConversation);
                     });
-
+                    callback(enrichedConversation);
                 } catch (error) {
                     console.error('Error in create conversation handler:', error);
                     socket.emit('error', { message: error.message });
                 }
             });
 
-            socket.on('create:group-conversation', async (data) => {
+            socket.on('create:group-conversation', async (data, callback) => {
                 try {
                     if (!data.name || !data.participants || data.participants.length < 2) {
                         throw new Error('Invalid group conversation data');
@@ -237,31 +283,342 @@ const setUpSocket = (server) => {
                         name: data.name,
                         participants: data.participants,
                         creator: userId,
+                        avatarGroup: data.avatarGroup || 'https://res.cloudinary.com/doruhcyf6/image/upload/v1733975023/Pngtree_group_avatar_icon_design_vector_3667776_xq0dzv.png'
                     })
                     await conversation.save();
 
-                    await conversation.populate({
-                        path: 'participants',
-                        select: 'name avatar status lastActive'
-                    })
+                    await conversation.populate([
+                        {
+                            path: 'participants',
+                            select: 'name avatar status lastActive'
+                        },
+                        {
+                            path: 'lastMessage',
+                            populate: {
+                                path: 'sender',
+                                select: 'name avatar status lastActive'
+                            }
+                        }
+                    ]);
 
                     const enrichedConversation = {
                         _id: conversation._id.toString(),
                         participants: conversation.participants,
-                        lastMessage: conversation.lastMessage || null,
+                        lastMessage: null,
                         name: conversation.name,
                         type: 'group',
+                        creator: userId,
+                        createdAt: conversation.createdAt,
+                        updatedAt: conversation.updatedAt,
+                        avatarGroup: conversation.avatarGroup || 'https://res.cloudinary.com/doruhcyf6/image/upload/v1733975023/Pngtree_group_avatar_icon_design_vector_3667776_xq0dzv.png'
+                    }
+
+                    if (callback) {
+                        callback({ conversation: enrichedConversation });
                     }
                     console.log('Emitted Group Conversation:', enrichedConversation);
                     data.participants.forEach(participantId => {
-                        io.to(participantId).emit('conversation:created', enrichedConversation);
+                        if (participantId !== userId) {
+                            io.to(participantId).emit('conversation:created', enrichedConversation);
+                        }
                     })
                 } catch (error) {
                     console.error('Error in create group conversation handler:', error);
-                    socket.emit('error', { message: error.message });
+                    if (callback) {
+                        callback({ error: error.message });
+                    } else {
+                        socket.emit('error', { message: error.message });
+                    }
                 }
             })
 
+            socket.on('group:updated', async ({ groupId, name, avatarGroup }) => {
+                try {
+
+                    const updatedGroup = await Conversation.findByIdAndUpdate(
+                        groupId,
+                        { $set: { name, avatarGroup, updatedAt: new Date() } },
+                        { new: true }
+                    ).populate(
+                        'participants', 'name avatar status lastActive'
+                    ).populate({
+                        path: 'lastMessage',
+                        populate: {
+                            path: 'sender',
+                            select: 'name avatar status lastActive'
+                        }
+                    });
+
+                    const enrichedLastMessage = updatedGroup.lastMessage ? {
+                        _id: updatedGroup.lastMessage._id,
+                        content: updatedGroup.lastMessage.content,
+                        createdAt: updatedGroup.lastMessage.createdAt,
+                        updatedAt: updatedGroup.lastMessage.updatedAt,
+                        type: updatedGroup.lastMessage.type,
+                        sender: {
+                            _id: updatedGroup.lastMessage.sender._id,
+                            name: updatedGroup.lastMessage.sender.name,
+                            avatar: updatedGroup.lastMessage.sender.avatar,
+                            status: updatedGroup.lastMessage.sender.status
+                        },
+                        readBy: updatedGroup.lastMessage.readBy || []
+                    } : null;
+
+                    const updateEvent = {
+                        _id: updatedGroup._id,
+                        name: updatedGroup.name,
+                        avatarGroup: updatedGroup.avatarGroup,
+                        participants: updatedGroup.participants,
+                        lastMessage: enrichedLastMessage,
+                        type: 'group',
+                        updatedAt: new Date()
+                    };
+                    if (updatedGroup.lastMessage) {
+                        updateEvent.lastMessage = updatedGroup.lastMessage;
+                    }
+
+                    io.sockets.sockets.forEach((socket) => {
+                        if (updatedGroup.participants.some(p => p._id.toString() === socket.user?._id?.toString())) {
+                            socket.emit('group:updated', updateEvent);
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error in update group handler:', error);
+                    socket.emit('error', { message: error.message });
+                }
+            });
+
+            socket.on('group:addMembers', async ({ groupId, memberId }) => {
+                try {
+                    const addedMember = await User.findById(memberId, 'name');
+                    const addedByUser = socket.user;
+
+                    const updatedGroup = await Conversation.findByIdAndUpdate(
+                        groupId,
+                        {
+                            $addToSet: {
+                                participants: memberId
+                            },
+                            $set: { updatedAt: new Date() }
+                        },
+                        { new: true }
+                    ).populate('participants', 'name avatar status lastActive');
+
+                    const personalizedContent = updatedGroup.participants.map(p => ({
+                        userId: p._id,
+                        content: p._id.toString() === addedByUser._id.toString()
+                            ? `You added ${addedMember.name} to the group`
+                            : p._id.toString() === memberId
+                                ? `You were added to the group by ${addedByUser.name}`
+                                : `${addedByUser.name} added ${addedMember.name} to the group`
+                    }))
+
+                    const systemMessage = await Message.create({
+                        conversationId: groupId,
+                        sender: addedByUser._id,
+                        content: `${addedByUser.name} added ${addedMember.name} to the group`,
+                        type: 'system',
+                        isSystemMessage: true,
+                        metadata: {
+                            addedUserId: memberId,
+                            addedUserName: addedMember.name,
+                            addedByUserId: addedByUser._id,
+                            addedByUserName: addedByUser.name
+                        },
+                        personalizedContent,
+                        createdAt: new Date(),
+                    });
+
+                    await Conversation.findByIdAndUpdate(
+                        groupId,
+                        { lastMessage: systemMessage._id }
+                    )
+
+                    const populatedMessage = await Message.findById(systemMessage._id)
+                        .populate('sender', 'name avatar status lastActive');
+
+                    updatedGroup.participants.forEach(participant => {
+                        const participantId = participant._id.toString();
+                        const personalizedMsg = personalizedContent.find(p => p.userId.toString() === participantId);
+
+                        const messageForParticipant = {
+                            ...populatedMessage.toObject(),
+                            content: personalizedMsg?.content || populatedMessage.content
+                        };
+
+                        const updateEvent = {
+                            ...updatedGroup.toObject(),
+                            lastMessage: {
+                                ...messageForParticipant,
+                                sender: {
+                                    _id: addedByUser._id,
+                                    name: addedByUser.name,
+                                    avatar: addedByUser.avatar,
+                                    status: addedByUser.status
+                                }
+                            }
+                        }
+
+                        io.sockets.sockets.forEach((socket) => {
+                            if (socket.user?._id.toString() === participantId) {
+                                socket.emit('group:updated', updateEvent);
+                                socket.emit('new:message', messageForParticipant);
+
+                                if (participantId === memberId) {
+                                    socket.emit('group:added', updateEvent);
+                                }
+                            }
+                        });
+                    });
+                } catch (error) {
+                    console.error('Error in add members to group handler:', error);
+                    socket.emit('error', { message: error.message });
+                }
+            });
+            socket.on('group:removeMember', async ({ groupId, memberId }) => {
+                try {
+                    const removedMember = await User.findById(memberId, 'name');
+                    const removedByUser = socket.user;
+
+                    const updatedGroup = await Conversation.findByIdAndUpdate(
+                        groupId,
+                        {
+                            $pull: { participants: memberId },
+                            $set: { updatedAt: new Date() }
+                        },
+                        { new: true }
+                    ).populate('participants', 'name avatar status lastActive');
+
+                    const personalizedContent = updatedGroup.participants.map(p => ({
+                        userId: p._id,
+                        content: p._id.toString() === removedByUser._id.toString()
+                            ? `You removed ${removedMember.name} from the group`
+                            : `${removedByUser.name} removed ${removedMember.name} from the group`
+                    }))
+
+                    const systemMessage = await Message.create({
+                        conversationId: groupId,
+                        sender: removedByUser._id,
+                        content: `${removedByUser.name} removed ${removedMember.name} from the group`,
+                        type: 'system',
+                        isSystemMessage: true,
+                        metadata: {
+                            removedUserId: memberId,
+                            removedUserName: removedMember.name,
+                            removedByUserId: removedByUser._id,
+                            removedByUserName: removedByUser.name
+                        },
+                        personalizedContent,
+                        createdAt: new Date(),
+                    });
+
+                    await Conversation.findByIdAndUpdate(groupId, {
+                        lastMessage: systemMessage._id
+                    });
+
+                    const populatedMessage = await Message.findById(systemMessage._id)
+                        .populate('sender', 'name avatar status lastActive');
+
+                    const userSocket = Array.from(io.sockets.sockets.values()).find(
+                        socket => socket.user?._id.toString() === memberId
+                    );
+
+                    if (userSocket) {
+                        userSocket.emit('group:removed', groupId);
+                    }
+
+                    updatedGroup.participants.forEach(participant => {
+                        const participantId = participant._id.toString();
+                        const personalizedMsg = personalizedContent.find(p => p.userId.toString() === participantId);
+
+
+                        const messageForParticipant = {
+                            ...populatedMessage.toObject(),
+                            content: personalizedMsg?.content || populatedMessage.content
+                        };
+
+                        const updateEvent = {
+                            ...updatedGroup.toObject(),
+                            lastMessage: {
+                                ...messageForParticipant,
+                                sender: {
+                                    _id: removedByUser._id,
+                                    name: removedByUser.name,
+                                    avatar: removedByUser.avatar,
+                                    status: removedByUser.status
+                                }
+                            }
+                        }
+
+                        io.sockets.sockets.forEach((socket) => {
+                            if (updatedGroup.participants.some(p => p._id.toString() === socket.user?._id?.toString())) {
+                                socket.emit('group:updated', updateEvent);
+                                socket.emit('new:message', messageForParticipant);
+                            }
+                        });
+                    });
+
+                } catch (error) {
+                    console.error('Error in remove member from group handler:', error);
+                    socket.emit('error', { message: error.message });
+                }
+            });
+
+            socket.on('group:leave', async ({ groupId, userId }) => {
+                try {
+                    const leavingUser = await User.findById(userId, 'name');
+                    const conversation = await Conversation.findByIdAndUpdate(
+                        groupId,
+                        { $pull: { participants: userId } },
+                        { new: true }
+                    ).populate('participants', 'name avatar status lastActive');
+
+                    if (conversation.creator.toString() === userId) {
+                        const newCreator = conversation.participants[0]?._id;
+                        if (newCreator) {
+                            conversation.creator = newCreator;
+                            await conversation.save();
+                        }
+                    }
+
+                    const systemMessage = await Message.create({
+                        conversationId: groupId,
+                        sender: userId,
+                        type: 'system',
+                        isSystemMessage: true,
+                        content: `${leavingUser.name} left the group`,
+                        createdAt: new Date()
+                    })
+
+                    io.sockets.sockets.forEach((socket) => {
+                        if (conversation.participants.some(p => p._id.toString() === socket.user?._id?.toString())) {
+                            socket.emit('group:updated', conversation);
+                            socket.emit('new:message', {
+                                ...systemMessage.toObject(),
+                            });
+                        }
+                    });
+
+                    // conversation.participants.forEach(participant => {
+                    //     io.to(participant._id.toString()).emit('new:message', {
+                    //         ...systemMessage.toObject(),
+                    //         content: `${leavingUser.name} left the group`
+                    //     });
+                    //     io.to(participant._id.toString()).emit('group:updated', conversation);
+                    // })
+
+                    const userSocket = Array.from(io.sockets.sockets.values()).find(
+                        socket => socket.user?._id.toString() === userId
+                    );
+
+                    if (userSocket) {
+                        userSocket.emit('group:left', groupId);
+                    }
+                } catch (error) {
+                    console.error('Error in leave group handler:', error);
+                    socket.emit('error', { message: error.message });
+                }
+            })
             socket.on('get:conversations', async (userId) => {
                 console.log('Received get:conversations request with userId:', userId);
                 try {
@@ -271,124 +628,320 @@ const setUpSocket = (server) => {
                     }
                     const userIdString = userId.toString();
 
-                    const allConversations = await Conversation.find({
-                        participants: userIdString
-                    })
-                    .populate({
-                        path: 'participants',
-                        select: 'name avatar status lastActive'
-                    })
-                    .populate({
-                        path: 'lastMessage',
-                        populate:{
-                            path: 'sender',
-                            select: 'name avatar status lastActive'
-                        }
-                    })
-                    .lean();
+                    // Fetch friendships in parallel with conversations
+                    const [allConversations, friendships] = await Promise.all([
+                        Conversation.find({
+                            participants: userIdString
+                        })
+                            .populate({
+                                path: 'participants',
+                                select: 'name avatar status lastActive'
+                            })
+                            .populate({
+                                path: 'lastMessage',
+                                populate: [{
+                                    path: 'sender',
+                                    select: 'name avatar status lastActive'
+                                }],
+                                select: 'content sender createdAt updatedAt type isRecalled recallType attachments personalizedContent readBy'
+                            })
+                            .sort({ updatedAt: -1 })
+                            .lean(),
 
-                    const friendships = await Friendships.find({
-                        $or: [
-                            { requester: userId, status: 'accepted' },
-                            { recipient: userId, status: 'accepted' }
-                        ]
-                    }).lean();
+                        Friendships.find({
+                            $or: [
+                                { requester: userId, status: 'accepted' },
+                                { recipient: userId, status: 'accepted' }
+                            ]
+                        }).lean()
+                    ]);
 
-                    const friendIds = friendships.map(friendship => 
+                    // Process friendships once
+                    const friendIds = new Set(friendships.map(friendship =>
                         friendship.requester.toString() === userIdString
                             ? friendship.recipient.toString()
                             : friendship.requester.toString()
-                    )
+                    ));
 
-                    const filteredConversations = allConversations.filter(conv =>{
-                        if (conv.type === 'group'){
-                            return true;
-                        }else if (conv.type === 'private'){
-                            
-                            const otherParticipantId = conv.participants.find(
-                                p => p._id.toString() !== userIdString
-                            )._id.toString();
+                    // Helper function to get personalized message content
+                    const getPersonalizedContent = (message) => {
+                        if (!message) return undefined;
 
-                            return friendIds.includes(otherParticipantId);
-                        }
-                        return false;
-                    })
-
-
-                    const enrichedConversations = filteredConversations.map(conv => {
-                        const conversationId = conv._id.toString();
-
-                        const enrichedParticipants = conv.participants.map(p => ({
-                            _id: p._id.toString(),
-                            name: p.name,
-                            avatar: p.avatar,
-                            status: p.status,
-                            lastActive: p.lastActive
-                        }));
-
-                        const enrichedLastMessage = conv.lastMessage ? {
-                            _id: conv.lastMessage._id.toString(),
-                            content: conv.lastMessage.content,
-                            sender: {
-                                _id: conv.lastMessage.sender._id.toString(),
-                                name: conv.lastMessage.sender.name,
-                                avatar: conv.lastMessage.sender.avatar,
-                                status: conv.lastMessage.sender.status,
-                                lastActive: conv.lastMessage.sender.lastActive
-                            },
-                            createdAt: conv.lastMessage.createdAt,
-                            updatedAt: conv.lastMessage.updatedAt,
-                            type: conv.lastMessage.type,
-                            isRecalled: conv.lastMessage.isRecalled,
-                            recallType: conv.lastMessage.recallType,
-                            attachments: conv.lastMessage.attachments || []
-                        } : undefined;
-
-                        // Base conversation object với các thuộc tính chung
-                        const baseConversation = {
-                            _id: conversationId,
-                            type: conv.type,
-                            lastMessage: enrichedLastMessage,
-                            createdAt: conv.createdAt,
-                            updatedAt: conv.updatedAt || conv.createdAt,
-                            participants: enrichedParticipants
-                        };
-
-                        // Thêm các thuộc tính đặc biệt cho từng loại conversation
-                        if (conv.type === 'group') {
-                            return {
-                                ...baseConversation,
-                                name: conv.name,
-                                avatarGroup: conv.avatarGroup,
-                                creator: conv.creator ? conv.creator.toString() : null,
-                                admins: conv.admins ? conv.admins.map(id => id.toString()) : []
-                            };
-                        }
-
-                        // Cho private conversation
-                        const otherParticipant = enrichedParticipants.find(p =>
-                            p._id.toString() !== userIdString
+                        const personalizedMsg = message.personalizedContent?.find(
+                            pc => pc.userId.toString() === userIdString
                         );
+                        return personalizedMsg?.content || message.content;
+                    };
+
+                    // Helper function to enrich participants
+                    const enrichParticipant = (p) => ({
+                        _id: p._id.toString(),
+                        name: p.name,
+                        avatar: p.avatar,
+                        status: p.status,
+                        lastActive: p.lastActive
+                    });
+
+                    // Helper function to enrich last message
+                    const enrichLastMessage = (message) => {
+                        if (!message) return undefined;
 
                         return {
-                            ...baseConversation,
-                            otherParticipant: otherParticipant || null
+                            _id: message._id.toString(),
+                            content: getPersonalizedContent(message),
+                            sender: message.sender ? {
+                                _id: message.sender._id.toString(),
+                                name: message.sender.name,
+                                avatar: message.sender.avatar,
+                                status: message.sender.status,
+                                lastActive: message.sender.lastActive
+                            } : null,
+                            createdAt: message.createdAt,
+                            updatedAt: message.updatedAt,
+                            type: message.type,
+                            isRecalled: message.isRecalled,
+                            recallType: message.recallType,
+                            attachments: message.attachments || [],
+                            readBy: message.readBy || []
                         };
-                    });
+                    };
 
-                    // Sắp xếp theo thời gian mới nhất
-                    const sortedConversations = enrichedConversations.sort((a, b) => {
-                        const aTime = a.lastMessage?.createdAt || a.updatedAt || a.createdAt;
-                        const bTime = b.lastMessage?.createdAt || b.updatedAt || b.createdAt;
-                        return new Date(bTime) - new Date(aTime);
-                    });
+                    const enrichedConversations = allConversations
+                        // Filter conversations
+                        .filter(conv => {
+                            if (conv.type === 'group') return true;
 
-                    socket.emit('conversations:list', sortedConversations);
+                            const otherParticipantId = conv.participants.find(
+                                p => p._id.toString() !== userIdString
+                            )?._id.toString();
+
+                            return friendIds.has(otherParticipantId) ||
+                                conv.isFriendshipPending ||
+                                conv.participants.length === 2;
+                        })
+                        // Map to enriched format
+                        .map(conv => {
+                            const conversationId = conv._id.toString();
+                            const enrichedParticipants = conv.participants.map(enrichParticipant);
+                            const enrichedLastMessage = enrichLastMessage(conv.lastMessage);
+
+                            const baseConversation = {
+                                _id: conversationId,
+                                type: conv.type,
+                                lastMessage: enrichedLastMessage,
+                                createdAt: conv.createdAt,
+                                updatedAt: conv.updatedAt || conv.createdAt,
+                                participants: enrichedParticipants,
+                                unreadCount: conv.type === 'group'
+                                    ? (conv.participantUnreadCount?.[userIdString] || 0)
+                                    : (conv.unreadCount || 0),
+                                isFriendshipPending: conv.isFriendshipPending || false,
+                                friendRequestStatus: conv.friendRequestStatus || 'none'
+                            };
+
+                            if (conv.type === 'group') {
+                                return {
+                                    ...baseConversation,
+                                    participantUnreadCount: conv.participantUnreadCount || {},
+                                    name: conv.name,
+                                    avatarGroup: conv.avatarGroup,
+                                    creator: conv.creator?.toString() || null
+                                };
+                            }
+
+                            const otherParticipant = enrichedParticipants.find(
+                                p => p._id !== userIdString
+                            );
+
+                            return {
+                                ...baseConversation,
+                                otherParticipant: otherParticipant || null
+                            };
+                        })
+                        // Sort by latest activity
+                        .sort((a, b) => {
+                            const aTime = a.lastMessage?.createdAt || a.updatedAt || a.createdAt;
+                            const bTime = b.lastMessage?.createdAt || b.updatedAt || b.createdAt;
+                            return new Date(bTime) - new Date(aTime);
+                        });
+
+                    socket.emit('conversations:list', enrichedConversations);
                 } catch (error) {
-                    console.error('Error in get conversations handler:', error);
+                    console.error('Error in get conversations handler:', error.stack);
                     socket.emit('error', { message: error.message });
                 }
             });
+
+            // socket.on('get:conversations', async (userId) => {
+            //     console.log('Received get:conversations request with userId:', userId);
+            //     try {
+            //         if (!userId) {
+            //             console.error('UserId is undefined');
+            //             return socket.emit('error', { message: 'UserId is required' });
+            //         }
+            //         const userIdString = userId.toString();
+
+            //         const [allConversations, friendships] = await Promise.all([
+            //             Conversation.find({
+            //                 participants: userIdString
+            //             }).populate({
+            //                 path: 'participants',	
+            //                 select: 'name avatar status lastActive'
+            //             }).populate({
+            //                 path: 'lastMessage',
+            //                 populate: [{
+            //                     path: 'sender',
+            //                     select: 'name avatar status lastActive'
+            //                 }],
+            //                 select: 'content sender createdAt updatedAt type isRecalled recallType attachments personalizedContent readBy'
+            //             })
+            //             .sort({ updatedAt: -1 })
+            //             .lean(),
+            //             Friendships.find({
+            //                 $or: [
+            //                     { requester: userId, status: 'accepted' },
+            //                     { recipient: userId, status: 'accepted' }
+            //                 ]
+            //             }).lean()
+            //         ])
+
+            //         // const allConversations = await Conversation.find({
+            //         //     participants: userIdString
+            //         // })
+            //         //     .populate({
+            //         //         path: 'participants',
+            //         //         select: 'name avatar status lastActive'
+            //         //     })
+            //         //     .populate({
+            //         //         path: 'lastMessage',
+            //         //         populate: {
+            //         //             path: 'sender',
+            //         //             select: 'name avatar status lastActive'
+            //         //         }
+            //         //     })
+            //         //     .sort({ updatedAt: -1 })
+            //         //     .lean();
+
+            //         // const friendships = await Friendships.find({
+            //         //     $or: [
+            //         //         { requester: userId, status: 'accepted' },
+            //         //         { recipient: userId, status: 'accepted' }
+            //         //     ]
+            //         // }).lean();
+
+            //         const friendIds = new Set(friendships.map(friendship =>
+            //             friendship.requester.toString() === userIdString
+            //                 ? friendship.recipient.toString()
+            //                 : friendship.requester.toString()
+            //         ))
+
+            //         const getPersonalizedContent = (message) => {
+            //             if (!message) {
+            //                 return null;
+            //             }
+
+            //             const personalizedMsg = message.personalizedContent?.find(
+            //                 pc => pc.userId.toString() === userIdString
+            //             );
+            //             return personalizedMsg?.content || message.content;
+            //         };
+
+            //         const filteredConversations = allConversations.filter(conv => {
+            //             if (conv.type === 'group') {
+            //                 return true;
+            //             } else if (conv.type === 'private') {
+            //                 const otherParticipantId = conv.participants.find(
+            //                     p => p._id.toString() !== userIdString
+            //                 )._id.toString();
+
+            //                 return friendIds.includes(otherParticipantId) || conv.isFriendshipPending || conv.participants.length === 2;
+            //             }
+            //             return false;
+            //         })
+
+
+            //         const enrichedConversations = filteredConversations.map(conv => {
+            //             const conversationId = conv._id.toString();
+            //             const unreadCount = conv.type === 'group'
+            //                 ? (conv.participantUnreadCount?.[userIdString] || 0)
+            //                 : conv.unreadCount || 0;
+
+            //             const enrichedParticipants = conv.participants.map(p => ({
+            //                 _id: p._id.toString(),
+            //                 name: p.name,
+            //                 avatar: p.avatar,
+            //                 status: p.status,
+            //                 lastActive: p.lastActive
+            //             }));
+
+            //             const enrichedLastMessage = conv.lastMessage ? {
+            //                 _id: conv.lastMessage._id.toString(),
+            //                 content: conv.lastMessage.content,
+            //                 sender: {
+            //                     _id: conv.lastMessage.sender._id.toString(),
+            //                     name: conv.lastMessage.sender.name,
+            //                     avatar: conv.lastMessage.sender.avatar,
+            //                     status: conv.lastMessage.sender.status,
+            //                     lastActive: conv.lastMessage.sender.lastActive
+            //                 },
+            //                 createdAt: conv.lastMessage.createdAt,
+            //                 updatedAt: conv.lastMessage.updatedAt,
+            //                 type: conv.lastMessage.type,
+            //                 isRecalled: conv.lastMessage.isRecalled,
+            //                 recallType: conv.lastMessage.recallType,
+            //                 attachments: conv.lastMessage.attachments || []
+            //             } : undefined;
+
+            //             const baseConversation = {
+            //                 _id: conversationId,
+            //                 type: conv.type,
+            //                 lastMessage: enrichedLastMessage,
+            //                 createdAt: conv.createdAt,
+            //                 updatedAt: conv.updatedAt || conv.createdAt,
+            //                 participants: enrichedParticipants,
+            //                 unreadCount,
+            //                 isFriendshipPending: conv.isFriendshipPending || false,
+            //                 friendRequestStatus: conv.friendRequestStatus || 'none'
+            //             };
+
+            //             if (conv.type === 'group') {
+            //                 return {
+            //                     ...baseConversation,
+            //                     participantUnreadCount: conv.participantUnreadCount || {},
+            //                     unreadCount: conv.participantUnreadCount?.[userIdString] || 0,
+            //                     name: conv.name,
+            //                     avatarGroup: conv.avatarGroup,
+            //                     creator: conv.creator ? conv.creator.toString() : null,
+            //                     lastMessage: conv.lastMessage ? {
+            //                         ...conv.lastMessage,
+            //                         readBy: conv.lastMessage.readBy || []
+            //                     } : null
+            //                 };
+            //             }
+
+            //             const otherParticipant = enrichedParticipants.find(p =>
+            //                 p._id.toString() !== userIdString
+            //             );
+
+            //             return {
+            //                 ...baseConversation,
+            //                 otherParticipant: otherParticipant || null
+            //             };
+            //         });
+
+            //         // Sắp xếp theo thời gian mới nhất
+            //         const sortedConversations = enrichedConversations.sort((a, b) => {
+            //             const aTime = a.lastMessage?.createdAt || a.updatedAt || a.createdAt;
+            //             const bTime = b.lastMessage?.createdAt || b.updatedAt || b.createdAt;
+            //             return new Date(bTime) - new Date(aTime);
+            //         });
+
+            //         socket.emit('conversations:list', sortedConversations);
+            //     } catch (error) {
+            //         console.error('Error in get conversations handler:', error);
+            //         socket.emit('error', { message: error.message });
+            //     }
+            // });
 
             socket.on('update:conversation', async ({ conversationId, lastMessage, type, attachments }) => {
                 try {
@@ -464,68 +1017,107 @@ const setUpSocket = (server) => {
 
             socket.on('files:added', async (fileData) => {
                 try {
-                  // Broadcast the new file to all clients in the conversation
-                  io.to(`conversation:${fileData.conversationId}`).emit('files:added', {
-                    ...fileData,
-                    sender: {
-                      _id: fileData.sender._id,
-                      name: fileData.sender.name,
-                      avatar: fileData.sender.avatar
-                    }
-                  });
+                    io.to(`conversation:${fileData.conversationId}`).emit('files:added', {
+                        ...fileData,
+                        sender: {
+                            _id: fileData.sender._id,
+                            name: fileData.sender.name,
+                            avatar: fileData.sender.avatar
+                        }
+                    });
                 } catch (error) {
-                  console.error('Error handling files:added event:', error);
+                    console.error('Error handling files:added event:', error);
                 }
-              });
-            // Xử lý join room conversation
-            socket.on('join:conversation', async (conversationId) => {
-                try {
+            });
 
-                    const conversation = await Conversation.findById(conversationId).populate('participants', '_id');
+
+            socket.on('join:conversation', async (conversationId) => {
+                console.log(`User ${userId} joined conversation ${conversationId}`);
+                try {
+                    const conversation = await Conversation.findById(conversationId)
+                        .populate('participants')
+                        .lean();
+
                     if (!conversation) {
                         throw new Error('Conversation not found');
                     }
-                    console.log('Checking participants:', {
-                        userId,
-                        participants: conversation.participants.map(p => p._id.toString()),
-                    });
 
-                    if (!conversation.participants.map(p => p._id.toString()).includes(userId.toString())) {
+                    const isParticipant = conversation.participants.some(p =>
+                        p._id.toString() === userId.toString()
+                    );
+
+                    if (!isParticipant) {
                         throw new Error('User is not a participant of this conversation');
                     }
-                    const unreadMessages = await Message.find({
-                        conversationId: conversationId,
-                        sender: { $ne: userId },
-                        status: { $ne: 'read' }
-                    })
 
-                    if (unreadMessages.length > 0) {
-                        await Message.updateMany({
-                            _id: { $in: unreadMessages.map(m => m._id) },
-                            status: { $ne: 'read' }
-                        }, {
-                            status: 'read',
-                            readAt: new Date()
-                        });
-                        await Conversation.findByIdAndUpdate(conversationId, {
-                            unreadCount: 0,
-                            $currentDate: { updatedAt: true }
-                        })
-
-                        io.to(`conversation:${conversationId}`).emit('message:mark-read', {
+                    await Message.updateMany(
+                        {
                             conversationId,
-                            messageIds: unreadMessages.map(m => m._id)
-                        })
-                    }
+                            readBy: { $type: "object", $not: { $type: "array" } }
+                        },
+                        {
+                            $set: { readBy: [] }
+                        }
+                    );
+
+                    await Message.updateMany(
+                        {
+                            conversationId,
+                            $or: [
+                                { readBy: { $exists: false } },
+                                { readBy: null }
+                            ]
+                        },
+                        {
+                            $set: { readBy: [] }
+                        }
+                    );
+
+                    const result = await Message.updateMany(
+                        {
+                            conversationId,
+                            'readBy.user': { $ne: userId }
+                        },
+                        {
+                            $push: {
+                                readBy: {
+                                    user: userId,
+                                    readAt: new Date()
+                                }
+                            },
+                            $set: { status: 'read' }
+                        }
+                    );
+                    await Conversation.findByIdAndUpdate(
+                        conversationId,
+                        {
+                            unreadCount: 0
+                        }
+                    )
+
                     socket.join(`conversation:${conversationId}`);
 
-                    console.log(`User ${userId} joined conversation ${conversationId}`);
+                    if (result.modifiedCount > 0) {
+                        const updatedMessages = await Message.find({
+                            conversationId,
+                            'readBy.user': userId
+                        });
+
+                        io.to(`conversation:${conversationId}`).emit('messages:read',
+                            updatedMessages.map(msg => ({
+                                _id: msg._id,
+                                conversationId: msg.conversationId,
+                                status: 'read',
+                                readAt: new Date(),
+                            }))
+                        );
+                    }
+
                 } catch (error) {
                     console.error('Error in join conversation handler:', error);
                     socket.emit('error', { message: error.message });
                 }
-                console.log(`User ${userId} joined conversation ${conversationId}`);
-            })
+            });
 
             // Xử lý leave room conversation
             socket.on('leave:conversation', (conversationId) => {
@@ -543,18 +1135,30 @@ const setUpSocket = (server) => {
                         }
                         return;
                     }
+
                     if (!conversationId || (!content && (!attachments || attachments.length === 0))) {
                         throw new Error('Invalid message data');
                     }
-                    const conversation = await Conversation.findById(conversationId).populate('participants');
-                    const recipientId = conversation.participants.find(p => p._id.toString() !== userId.toString())?._id;
 
-                    const recipientSocketInRoom = await io.in(`conversation:${conversationId}`).fetchSockets();
-                    const isRecipientInRoom = recipientSocketInRoom.some(
-                        s => s.user?._id?.toString() === recipientId?.toString()
-                    )
+                    const conversation = await Conversation.findById(conversationId)
+                        .populate('participants', 'name avatar status lastActive');
+
+                    const recipientSocket = await io.in(`conversation:${conversationId}`).fetchSockets();
+                    const activeUserIds = recipientSocket.map(socket => socket.user._id.toString());
+                    const activeRecipients = activeUserIds.filter(id => id !== userId);
 
 
+                    const readBy = [{
+                        user: userId,
+                        readAt: new Date()
+                    }];
+
+                    if (activeRecipients.length > 0) {
+                        readBy.push(...activeRecipients.map(id => ({
+                            user: id,
+                            readAt: new Date()
+                        })));
+                    }
                     const message = new Message({
                         conversationId,
                         sender: userId,
@@ -568,86 +1172,104 @@ const setUpSocket = (server) => {
                             mimeType: file.mimeType,
                             fileSize: file.fileSize
                         })) : [],
-                        status: isRecipientInRoom ? 'read' : (onlineUsers.has(recipientId) ? 'delivered' : 'sent'),
+                        status: 'sent',
                         sentAt: createdAt || new Date(),
                         tempId,
-                        readBy: isRecipientInRoom ? {
-                            user: recipientId,
-                            readAt: new Date()
-                        } : null
-                    })
-                    await message.save();
+                        readBy
+                    });
 
                     await message.populate([
                         { path: 'sender', select: 'name avatar _id' },
                         { path: 'reactions.user', select: 'name avatar _id' },
                         { path: 'replyTo', select: 'content sender', populate: { path: 'sender', select: 'name avatar' } }
                     ]);
-                    io.to(`conversation:${conversationId}`).emit('new:message', message);
+                    await message.save();
 
-                    if (replyTo) {
-                        io.to(`conversation:${conversationId}`).emit('message:reply', message);
-                    }
-                    const updatedConversations = await Conversation.findByIdAndUpdate(
-                        conversationId,
-                        {
-                            lastMessage: message._id,
-                            updatedAt: new Date()
-                        },
-                        {
-                            new: true
-                        }
-                    ).populate({
-                        path: 'lastMessage',
-                        populate: {
-                            path: 'sender',
-                            select: 'name avatar _id'
-                        }
-                    }).lean();
 
-                    const formattedConversation = {
-                        _id: updatedConversations._id,
-                        type: updatedConversations.type,
-                        createdAt: updatedConversations.createdAt,
-                        updatedAt: new Date(),
-                        lastMessage: {
-                            _id: message._id,
-                            content: message.content,
-                            type: message.type,
-                            sender: {
-                                _id: sender._id,
-                                name: sender.name,
-                                avatar: sender.avatar
-                            },
-                            conversationId: conversationId,
-                            createdAt: message.createdAt || message.sentAt,
-                            attachments: message.attachments,
+                    if (conversation.type === 'group') {
+
+                        const inactiveParticipants = conversation.participants
+                            .filter(p => {
+                                const participantId = p._id.toString();
+                                return participantId !== userId && !activeRecipients.includes(participantId);
+                            });
+
+                        if (inactiveParticipants.length > 0) {
+                            const bulkOps = inactiveParticipants.map(participant => ({
+                                updateOne: {
+                                    filter: {
+                                        _id: conversationId,
+                                    },
+                                    update: {
+                                        $inc: { [`participantUnreadCount.${participant._id}`]: 1 },
+                                        $set: {
+                                            lastMessage: message._id,
+                                            updatedAt: new Date()
+                                        }
+                                    }
+                                }
+                            }))
+                            await Conversation.bulkWrite(bulkOps);
+                        } else {
+                            await Conversation.findByIdAndUpdate(
+                                conversationId,
+                                {
+                                    lastMessage: message._id,
+                                    updatedAt: new Date(),
+                                }
+                            )
                         }
-                    }
-                    if (updatedConversations.type === 'private') {
-                        const otherParticipant = updatedConversations.participants.find(
-                            p => p._id.toString() !== sender._id.toString()
+                        // await Conversation.bulkWrite(bulkOps);
+
+                    } else {
+
+                        const recipientId = conversation.participants.find(p => p._id.toString() !== userId)._id.toString();
+
+                        const shouldIncrementUnread = !activeRecipients.includes(recipientId);
+
+                        await Conversation.findByIdAndUpdate(
+                            conversationId,
+                            {
+                                lastMessage: message._id,
+                                updatedAt: new Date(),
+                                ...(shouldIncrementUnread ? { $inc: { unreadCount: 1 } } : {})
+                            }
                         );
-                        formattedConversation.otherParticipant = {
-                            _id: otherParticipant._id,
-                            name: otherParticipant.name,
-                            avatar: otherParticipant.avatar,
-                            status: otherParticipant.status,
-                            lastActive: otherParticipant.lastActive
-                        };
                     }
 
-                    io.to(`conversation:${conversationId}`).emit('new:message', message);
-                    io.to(`conversation:${conversationId}`).emit('conversation:updated', formattedConversation);
+                    const participants = conversation.participants;
+                    for (const participant of participants) {
+
+                        const participantId = participant._id.toString();
+                        const participantSockets = await io.in(`user:${participantId}`).fetchSockets();
+                        const isActiveRecipient = activeRecipients.includes(participantId);
+
+                        const unreadCount = participantId === userId || isActiveRecipient
+                            ? 0
+                            : (conversation.type === 'group')
+                                ? (conversation.participantUnreadCount?.get(participantId) || 0) + 1
+                                : (!isActiveRecipient ? (conversation.unreadCount || 0) + 1 : 0);
+
+                        for (const socket of participantSockets) {
+                            socket.emit('new:message', {
+                                ...message.toObject(),
+                                conversationId,
+                                unreadCount,
+                                isUnread: participantId !== userId && !isActiveRecipient,
+                                readBy: message.readBy,
+                            });
+                        }
+                    }
+
                     if (callback) {
                         callback(null, message);
                     }
-                    console.log('Message sent:', message);
                 } catch (error) {
                     console.error('Error in send message handler:', error);
                     socket.emit('error', { message: error.message });
                 }
-            })
+            });
+
             socket.on('message:react', async ({ messageId, emoji }) => {
                 try {
                     const message = await Message.findById(messageId);
@@ -752,7 +1374,7 @@ const setUpSocket = (server) => {
                         recalledAt: new Date(),
                         content: recallType === 'self' ? content : '',
                         attachments: message.attachments,
-                        status: 'delivered'
+                        status: 'delivered',
                     }
 
                     const updateMessage = await Message.findByIdAndUpdate(
@@ -764,39 +1386,45 @@ const setUpSocket = (server) => {
                         select: 'name avatar status lastActive'  // Thêm status và lastActive
                     });
 
+                    const messageSender = updateMessage.sender;
+
                     io.to(`conversation:${conversationId}`).emit('message:recalled', {
                         messageId,
                         recallType,
                         message: updateMessage,
                         sender: {
-                            _id: sender._id,
-                            name: sender.name,
-                            avatar: sender.avatar,
-                            status: sender.status,
-                            lastActive: sender.lastActive
+                            _id: messageSender._id,
+                            name: messageSender.name,
+                            avatar: messageSender.avatar,
+                            status: messageSender.status,
+                            lastActive: messageSender.lastActive
                         },
                         originalContent: content
                     });
 
                     const conversation = await Conversation.findById(conversationId);
-                    if (conversation.lastMessage.toString() === messageId) {
 
-                        // const updatedConversation = await Conversation.findByIdAndUpdate(
-                        //     conversationId,
-                        //     {
-                        //         lastMessage: previousMessage?._id || message._id,
-                        //         updatedAt: new Date()
-                        //     },
-                        //     { new: true }
-                        // ).populate({
-                        //     path: 'lastMessage',
-                        //     populate: {
-                        //         path: 'sender',
-                        //         select: 'name avatar status lastActive'
-                        //     }
-                        // });
+                    const update = {
+                        lastMessage: updateMessage._id,
+                        updatedAt: new Date()
+                    }
+
+                    await Conversation.findByIdAndUpdate(conversationId, update, { new: true });
+
+                    const otherParticipant = conversation.participants.find(participant => participant._id.toString() !== userId.toString());
+                    if (conversation.lastMessage.toString() === messageId) {
                         io.to(`conversation:${conversationId}`).emit('conversation:updated', {
                             _id: conversationId,
+                            type: conversation.type,
+                            name: conversation.name,
+                            avatarGroup: conversation.avatarGroup,
+                            otherParticipant: conversation.type === 'private' ? {
+                                _id: otherParticipant._id,
+                                name: otherParticipant.name,
+                                avatar: otherParticipant.avatar,
+                                status: otherParticipant.status,
+                                lastActive: otherParticipant.lastActive
+                            } : undefined,
                             lastMessage: {
                                 ...updateMessage.toObject(),
                                 content: recallType === 'everyone'
@@ -805,13 +1433,15 @@ const setUpSocket = (server) => {
                                         ? 'You have recalled a message'
                                         : content,
                                 sender: {
-                                    _id: sender._id,
-                                    name: sender.name,
-                                    avatar: sender.avatar,
-                                    status: sender.status,
-                                    lastActive: sender.lastActive
+                                    _id: messageSender._id,
+                                    name: messageSender.name,
+                                    avatar: messageSender.avatar,
+                                    status: messageSender.status,
+                                    lastActive: messageSender.lastActive
                                 }
                             },
+                            unreadCount: conversation.unreadCount,
+                            participantUnreadCount: conversation.participantUnreadCount,
                             updatedAt: new Date()
                         });
                     }
@@ -820,22 +1450,7 @@ const setUpSocket = (server) => {
                     socket.emit('error', { message: error.message });
                 }
             })
-            socket.on('delete:message', async (messageId) => {
-                try {
-                    const message = await Message({
-                        _id: messageId,
-                        sender: userId
-                    });
-                    if (!message) {
-                        throw new Error('Message not found');
-                    }
-                    await message.remove();
-                    io.emit('message:deleted', messageId);
-                } catch (error) {
-                    console.error('Error in delete message handler:', error);
-                    socket.emit('error', { message: error.message });
-                }
-            });
+
             socket.on('get:messages', async (conversationId, callback) => {
                 try {
                     const messages = await Message.find({ conversationId })
@@ -848,6 +1463,10 @@ const setUpSocket = (server) => {
                                 {
                                     path: 'reactions.user',
                                     select: '_id name avatar'
+                                },
+                                {
+                                    path: 'readBy.user',
+                                    select: 'name avatar'
                                 }
                             ]
                         )
@@ -863,6 +1482,7 @@ const setUpSocket = (server) => {
                     console.error('Error in get messages handler:', error);
                 }
             });
+
             socket.on('message:mark-read', async (conversationId) => {
                 try {
                     const validConversationId = new mongoose.Types.ObjectId(conversationId);
@@ -900,61 +1520,89 @@ const setUpSocket = (server) => {
                     const validConversationId = new mongoose.Types.ObjectId(
                         typeof data === 'string' ? data : data.conversationId
                     );
+
                     const conversation = await Conversation.findById(validConversationId);
 
-                    if (!conversation) {
-                        throw new Error('Conversation not found');
-                    }
-                    const unreadMessages = await Message.find({
-                        conversationId: validConversationId,
-                        sender: { $ne: userId },
-                        status: { $ne: 'read' }
-                    })
-                    if (unreadMessages.length > 0) {
-                        const updatedMessages = await Message.find({
+                    // Update messages that don't have readBy array
+                    await Message.updateMany(
+                        {
                             conversationId: validConversationId,
-                            status: 'read'
-                        });
-
-                        io.in(`conversation:${validConversationId}`).emit('message:status-updated',
-                            updatedMessages.map(msg => ({
-                                _id: msg._id,
-                                conversationId: msg.conversationId,
-                                status: 'read',
-                                readAt: msg.readAt
-                            }))
-                        );
-                        await Message.updateMany(
-                            {
-                                _id: { $in: unreadMessages.map(m => new mongoose.Types.ObjectId(m._id)) },
-                                status: { $ne: 'read' }
+                            'readBy.user': { $ne: userId },
+                            sender: { $ne: userId }
+                        },
+                        {
+                            $addToSet: {
+                                readBy: {
+                                    user: userId,
+                                    readAt: new Date()
+                                }
                             },
-                            {
+                            $set: {
                                 status: 'read',
                                 readAt: new Date()
                             }
-                        );
-                        await Conversation.findByIdAndUpdate(
-                            validConversationId,
+                        }
+                    );
+
+
+                    if (conversation.type === 'group') {
+                        await Conversation.updateOne(
+                            { _id: validConversationId },
                             {
-                                $set: { unreadCount: 0 },
-                                $currentDate: { updatedAt: true }
+                                $set: {
+                                    [`participantUnreadCount.${userId}`]: 0
+                                }
                             }
-                        );
+                        )
+                    } else {
+                        await Conversation.updateOne(
+                            { _id: validConversationId },
+                            {
+                                $set: {
+                                    unreadCount: 0
+                                }
+                            }
+                        )
                     }
+
+
+                    const updatedMessages = await Message.find({
+                        conversationId: validConversationId,
+                        'readBy.user': userId
+                    }).populate('readBy.user', 'name avatar');
+
+                    io.in(`conversation:${validConversationId}`).emit('message:status-updated',
+                        updatedMessages.map(msg => ({
+                            _id: msg._id,
+                            conversationId: msg.conversationId,
+                            status: 'read',
+                            readAt: new Date(),
+                            readBy: msg.readBy,
+                        }))
+                    );
+                    // }
+
                 } catch (error) {
                     console.error('Error updating message status:', error);
                 }
             });
+
             socket.on('mark:conversation-read', async (conversationId) => {
                 try {
                     await Message.updateMany({
                         conversationId,
                         sender: { $ne: userId },
-                        status: { $ne: 'read' }
+                        status: { $ne: 'read' },
+                        'readBy.user': { $ne: userId }
                     }, {
                         status: 'read',
-                        readAt: new Date()
+                        readAt: new Date(),
+                        $set: {
+                            readBy: {
+                                user: userId,
+                                readAt: new Date()
+                            }
+                        }
                     })
 
                     const readMessages = await Message.find({
@@ -963,19 +1611,17 @@ const setUpSocket = (server) => {
                         sender: { $ne: userId }
                     })
 
-                    readMessages.forEach(message => {
-                        io.to(`conversation:${conversationId}`).emit('message:status-updated',
-                            readMessages.map(msg => ({
-                                _id: msg._id,
-                                conversationId: msg.conversationId,
-                                status: 'read',
-                                readAt: msg.readBy.readAt
-                            }))
-                        )
-                    })
+                    io.to(`conversation:${conversationId}`).emit('message:status-updated',
+                        readMessages.map(msg => ({
+                            _id: msg._id,
+                            conversationId: msg.conversationId,
+                            status: 'read',
+                            readAt: new Date()
+                        }))
+                    )
+
                     await Conversation.findByIdAndUpdate(conversationId, {
-                        unreadCount: 0,
-                        $currentDate: { updatedAt: true }
+                        $set: { unreadCount: 0 },
                     })
                 } catch (error) {
                     console.error('Error in mark conversation read handler:', error);
@@ -1051,6 +1697,7 @@ const setUpSocket = (server) => {
                     console.error('Error in get files handler:', error);
                 }
             })
+
             socket.on('sendFriendRequest', async (data) => {
                 const { requesterId, recipientId } = data;
 
@@ -1062,6 +1709,9 @@ const setUpSocket = (server) => {
                     }
                     const requesterUser = await Users.findById(requesterId);
                     const recipientUser = await Users.findById(recipientId);
+
+                    console.log('Requester User:', requesterUser);
+                    console.log('Recipient User:', recipientUser);
 
                     if (!requesterUser || !recipientUser) {
                         return socket.emit('friendRequestError', {
@@ -1081,6 +1731,11 @@ const setUpSocket = (server) => {
                         })
                     }
 
+                    console.log('Creating friendship request:', {
+                        requester: requesterId,
+                        recipient: recipientId,
+                        status: 'pending'
+                    });
                     const friendshipRequest = new Friendships({
                         requester: requesterId,
                         recipient: recipientId,
@@ -1116,6 +1771,32 @@ const setUpSocket = (server) => {
                         notification: notification.toObject(),
                     });
 
+
+                    await Conversation.findOneAndUpdate(
+                        {
+                            type: 'private',
+                            participants: { $all: [requesterId, recipientId] }
+                        },
+                        {
+                            friendRequestStatus: 'pending',
+                            isFriendshipPending: true
+                        }
+                    )
+                    const updatedConversation = await Conversation.findOne({
+                        type: 'private',
+                        participants: { $all: [requesterId, recipientId] }
+                    }).populate('participants', 'name avatar status lastActive');
+
+                    io.to(requesterId).emit('conversation:updated', {
+                        ...updatedConversation.toObject(),
+                        friendRequestStatus: 'pending',
+                        isFriendshipPending: true
+                    });
+                    io.to(recipientId).emit('conversation:updated', {
+                        ...updatedConversation.toObject(),
+                        friendRequestStatus: 'pending',
+                        isFriendshipPending: true
+                    });
                 } catch (error) {
                     socket.emit('friendRequestError', {
                         message: 'Error sending friend request'
@@ -1123,7 +1804,64 @@ const setUpSocket = (server) => {
                 }
             })
 
-            socket.on('respondToFriendRequest', async (data) => {
+            socket.on('cancelFriendRequest', async ({ requesterId, recipientId }) => {
+                try {
+
+                    const existingFriendship = await Friendships.findOne({
+                        requester: requesterId,
+                        recipient: recipientId,
+                        status: 'pending'
+                    })
+
+                    if (!existingFriendship) {
+                        return socket.emit('friendRequestCancelled', {
+                            requesterId,
+                            recipientId
+                        });
+                    }
+
+                    await Conversation.findOneAndUpdate(
+                        {
+                            type: 'private',
+                            participants: { $all: [requesterId, recipientId] }
+                        },
+                        {
+                            friendRequestStatus: 'recalled',
+                            isFriendshipPending: true
+                        }
+                    )
+                    await Friendships.findOneAndDelete({
+                        requester: requesterId,
+                        recipient: recipientId,
+                        status: 'pending'
+                    });
+
+                    const updatedConversation = await Conversation.findOne({
+                        type: 'private',
+                        participants: { $all: [requesterId, recipientId] }
+                    }).populate('participants', 'name avatar status lastActive');
+
+                    io.to(requesterId).emit('conversation:updated', {
+                        ...updatedConversation.toObject(),
+                        friendRequestStatus: 'recalled',
+                        isFriendshipPending: true
+                    });
+                    io.to(recipientId).emit('conversation:updated', {
+                        ...updatedConversation.toObject(),
+                        friendRequestStatus: 'recalled',
+                        isFriendshipPending: true
+                    });
+
+                    io.to(recipientId).emit('friendRequestCancelled', { requesterId });
+                } catch (error) {
+                    console.error('Error cancelling friend request:', error);
+                    socket.emit('friendRequestError', {
+                        message: 'Error cancelling friend request'
+                    });
+                }
+            })
+
+            socket.on('respondToFriendRequest', async (data, callback) => {
                 const { requestId, status, userId } = data;
 
                 try {
@@ -1153,8 +1891,8 @@ const setUpSocket = (server) => {
                         {
                             type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
                             content: status === 'accepted'
-                                ? `Bạn đã chấp nhận lời mời kết bạn từ ${friendship.requester.name}`
-                                : `Bạn đã từ chối lời mời kết bạn từ ${friendship.requester.name}`,
+                                ? `You have accepted the friend request from ${friendship.requester.name}`
+                                : `You have rejected the friend request ${friendship.requester.name}`,
                             isRead: true
                         }
                     );
@@ -1163,8 +1901,8 @@ const setUpSocket = (server) => {
                         type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
                         referenceId: requestId,
                         content: status === 'accepted'
-                            ? `${friendship.recipient.name} đã chấp nhận lời mời kết bạn của bạn`
-                            : `${friendship.recipient.name} đã từ chối lời mời kết bạn của bạn`,
+                            ? `${friendship.recipient.name} accepted your friend request`
+                            : `${friendship.recipient.name} rejected your friend request`,
                         isRead: false,
                         sender: {
                             _id: userId,
@@ -1174,58 +1912,134 @@ const setUpSocket = (server) => {
                     });
                     await requesterNotification.save();
 
-                    if (status === 'accepted') {
-                        const conversation = new Conversation({
-                            type: 'private',
-                            participants: [friendship.requester._id, friendship.recipient._id],
-                            creator: userId,
-                            createdAt: new Date(),
-                            updatedAt: new Date()
-                        })
-                        await conversation.save();
+                    io.sockets.sockets.forEach((socket) => {
+                        if (socket.user?._id?.toString() === friendship.requester._id.toString()) {
+                            socket.emit('friendRequestResponded', {
+                                type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
+                                notification: requesterNotification.toObject()
+                            });
+                        }
+                    });
 
-                        await conversation.populate({
-                            path: 'participants',
-                            select: 'name avatar status lastActive'
-                        });
+                    if (status === 'accepted') {
+                        let existingConversation = await Conversation.findOne({
+                            type: 'private',
+                            participants: { $all: [friendship.requester._id, friendship.recipient._id] }
+                        }).populate('participants', 'name avatar status lastActive');
+
+                        if (!existingConversation) {
+                            existingConversation = new Conversation({
+                                type: 'private',
+                                participants: [friendship.requester._id, friendship.recipient._id],
+                                creator: userId,
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                                isFriendshipPending: false,
+                                friendRequestStatus: 'none'
+                            });
+
+                            await existingConversation.save();
+                            await existingConversation.populate('participants', 'name avatar status lastActive');
+
+                        } else {
+                            existingConversation.isFriendshipPending = false;
+                            existingConversation.friendRequestStatus = 'none';
+                            await existingConversation.save();
+                        }
+
+                        // const conversation = new Conversation({
+                        //     type: 'private',
+                        //     participants: [friendship.requester._id, friendship.recipient._id],
+                        //     creator: userId,
+                        //     createdAt: new Date(),
+                        //     updatedAt: new Date(),
+
+                        // })
+                        // await conversation.save();
+
+                        // await conversation.populate({
+                        //     path: 'participants',
+                        //     select: 'name avatar status lastActive'
+                        // });
 
                         const enrichedConversation = {
-                            _id: conversation._id.toString(),
+                            _id: existingConversation._id.toString(),
                             type: 'private',
-                            participants: conversation.participants,
-                            lastMessage: null,
-                            updatedAt: new Date(),
-                            otherParticipant: conversation.participants.find(
+                            participants: existingConversation.participants.map(p => ({
+                                _id: p._id.toString(),
+                                name: p.name,
+                                avatar: p.avatar,
+                                status: p.status,
+                                lastActive: p.lastActive
+                            })),
+                            lastMessage: existingConversation.lastMessage,
+                            createdAt: existingConversation.createdAt,
+                            updatedAt: existingConversation.updatedAt,
+                            otherParticipant: existingConversation.participants.find(
                                 p => p._id.toString() !== userId.toString()
-                            )
+                            ),
+                            isFriendshipPending: false,
+                            friendRequestStatus: 'none'
+                        };
+
+                        // Use callback to return conversation
+
+
+                        // const createEnrichedConversation = (forUserId) => ({
+                        //     _id: conversation._id.toString(),
+                        //     type: 'private',
+                        //     participants: conversation.participants.map(p => ({
+                        //         _id: p._id.toString(),
+                        //         name: p.name,
+                        //         avatar: p.avatar,
+                        //         status: p.status,
+                        //         lastActive: p.lastActive
+                        //     })),
+                        //     lastMessage: null,
+                        //     createdAt: conversation.createdAt,
+                        //     updatedAt: conversation.updatedAt,
+                        //     otherParticipant: conversation.participants.find(
+                        //         p => p._id.toString() !== userId.toString()
+                        //     )
+                        // });
+                        // const requesterConversation = createEnrichedConversation(friendship.requester._id);
+
+                        // io.to(friendship.requester._id).emit('friendRequestAccepted', {
+                        //     type: 'friend_request_accepted',
+                        //     conversation: enrichedConversation
+                        // });
+
+                        // // const recipientConversation = createEnrichedConversation(friendship.recipient._id);
+                        // io.to(friendship.recipient._id).emit('friendRequestAccepted', {
+                        //     type: 'friend_request_accepted',
+                        //     conversation: enrichedConversation
+                        // });
+
+                        io.sockets.sockets.forEach((socket) => {
+                            // Kiểm tra nếu socket thuộc về người gửi hoặc người nhận friend request
+                            if (
+                                socket.user?._id?.toString() === friendship.recipient._id.toString() ||
+                                socket.user?._id?.toString() === friendship.requester._id.toString()
+                            ) {
+                                socket.emit('conversation:created', {
+                                    ...enrichedConversation,
+                                    otherParticipant: enrichedConversation.participants.find(
+                                        p => p._id.toString() !== socket.user._id.toString()
+                                    )
+                                });
+                            }
+                        });
+
+                        if (callback) {
+                            callback(enrichedConversation);
                         }
-                        [friendship.requester._id, friendship.recipient._id].forEach(id => {
-                            io.to(id.toString()).emit('conversation:created', {
-                                conversation: enrichedConversation,
-                                isRecipient: id.toString() === friendship.recipient._id.toString()
-                            });
-                        });
-                        io.to(friendship.requester._id.toString()).emit('friendRequestAccepted', {
-                            type: 'friend_request_accepted',
-                            notification: requesterNotification,
-                            conversation: enrichedConversation,
-                            recipient: friendship.recipient._id,
-                            requester: friendship.requester._id
-                        });
-
-                        io.to(friendship.recipient._id.toString()).emit('friendRequestAccepted', {
-                            type: 'friend_request_accepted',
-                            conversation: enrichedConversation,
-                            recipient: friendship.recipient._id,
-                            requester: friendship.requester._id
-                        });
-
-                    } else if (status === 'rejected') {
-                        io.to(friendship.requester._id.toString()).emit('friendRequestRejected', {
-                            type: 'friend_request_rejected',
-                            notification: requesterNotification
-                        });
                     }
+                    //  else if (status === 'rejected') {
+                    //     io.to(friendship.requester._id.toString()).emit('friendRequestRejected', {
+                    //         type: 'friend_request_rejected',
+                    //         notification: requesterNotification
+                    //     });
+                    // }
                 } catch (error) {
                     socket.emit('friendRequestError', {
                         message: 'Error responding to friend request'

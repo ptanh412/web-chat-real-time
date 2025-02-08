@@ -40,7 +40,7 @@ const messageSchema = new mongoose.Schema({
     type: {
         type: String,
         required: true,
-        enum: ['text', 'multimedia'],
+        enum: ['text', 'multimedia', 'system'],
         default: function () {
             return this.attachments && this.attachments.length > 0 ? 'multimedia' : 'text';
         }
@@ -68,15 +68,16 @@ const messageSchema = new mongoose.Schema({
         mimeType: String,
         fileSize: Number,
     }],
-    readBy: {
+    readBy: [{
         user: {
             type: mongoose.Schema.Types.ObjectId,
-            ref: 'Users',
+            ref: 'Users'
         },
         readAt: {
-            type: Date
-        },
-    },
+            type: Date,
+            default: Date.now
+        }
+    }],
     createdAt: {
         type: Date,
         default: Date.now,
@@ -101,7 +102,14 @@ const messageSchema = new mongoose.Schema({
     recallType: {
         type: String,
         enum: ['everyone', 'self']
-    }
+    },
+    personalizedContent: [{
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Users',
+        },
+        content: String,
+    }]
 }, {
     strict: true,
     timestamps: { updatedAt: 'updatedAt' }

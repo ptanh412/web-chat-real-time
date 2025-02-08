@@ -87,7 +87,7 @@ const getFriendRequests = async (userId, status = 'pending') => {
 }
 
 const getallFriends = async (userId) => {
-    const friendship =  await Friendships.find({
+    const friendship = await Friendships.find({
         $or: [
             { requester: userId, status: 'accepted' },
             { recipient: userId, status: 'accepted' },
@@ -122,6 +122,18 @@ const getUnfriend = async (userId) => {
     }).select('name avatar status');
     return unfriendedUsers;
 }
+
+const getPendingRequest = async (userId) => {
+    return Friendships.find({
+        $or: [
+            { requester: userId, status: 'pending' },
+            { recipient: userId, status: 'pending' },
+        ]
+    })
+        .populate('recipient', 'name avatar')
+        .populate('requester', 'name avatar')
+        .sort({ createdAt: -1 });
+}
 module.exports = {
     senderFriendRequest,
     checkExistingRequest,
@@ -131,5 +143,6 @@ module.exports = {
     getFriendRequests,
     getallFriends,
     getUnfriend,
+    getPendingRequest,
 }
 

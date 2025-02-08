@@ -74,6 +74,16 @@ const getUnfriend = async(req, res) =>{
         res.status(400).json({sucess: false, message: error.message});
     }
 }
+
+const getPendingFriendRequests = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const sentRequests = await friendshipService.getPendingRequest(userId);
+        res.status(200).json({success: true, sentRequests: sentRequests});
+    } catch (error) {
+        res.status(400).json({success: false, message: error.message});
+    }
+}
 module.exports = {
     sendFriendRequest,
     acceptFriendRequest,
@@ -81,5 +91,6 @@ module.exports = {
     removeFriend,
     getFriendRequests,
     getFriendList,
-    getUnfriend
+    getUnfriend,
+    getPendingFriendRequests
 }   
