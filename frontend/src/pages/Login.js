@@ -194,35 +194,35 @@ const Login = () => {
                     </div>
                     {tab === 0 ? (
                         <form className="p-6" onSubmit={handleLogin}>
-                            <h1 className="text-3xl font-bold mb-4 text-center">Login</h1>
+                            <h1 className="text-3xl font-bold mb-4 text-center text-black">Login</h1>
                             <p className="text-gray-400 text-center">Enter your account information to log in</p>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Email</label>
+                                <label className="text-xl font-semibold text-black">Email</label>
                                 <div className="w-full relative">
                                     <MdOutlineEmail className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="email"
                                         placeholder="email@example.com"
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
                                     />
                                 </div>
                             </div>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Password</label>
+                                <label className="text-xl font-semibold text-black">Password</label>
                                 <div className="w-full relative">
                                     <CiLock className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="password"
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         placeholder="Enter password"
                                     />
                                 </div>
                             </div>
-                            <Link to="/forgot-password" className='line-clamp-1 mb-5 ml-1 text-sm underline'> Forgot password?</Link>
+                            <Link to="/forgot-password" className='line-clamp-1 mb-5 ml-1 text-sm underline text-black'> Forgot password?</Link>
                             <button
                                 type="submit"
                                 className="py-2 bg-slate-950 text-white w-full rounded-xl font-semibold text-lg hover:bg-slate-900"
@@ -232,55 +232,55 @@ const Login = () => {
                         </form>
                     ) : (
                         <form className="p-6" onSubmit={handleRegister}>
-                            <h1 className="text-3xl font-bold mb-4 text-center">Register</h1>
+                            <h1 className="text-3xl font-bold mb-4 text-center text-black">Register</h1>
                             <p className="text-gray-400 text-center">Create a new account to use our services</p>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Name</label>
+                                <label className="text-xl font-semibold text-black">Name</label>
                                 <div className="w-full relative">
                                     <MdOutlineEmail className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="text"
                                         placeholder="Enter your name..."
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={name}
                                         onChange={(e) => setName(e.target.value)}
                                     />
                                 </div>
                             </div>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Email</label>
+                                <label className="text-xl font-semibold text-black">Email</label>
                                 <div className="w-full relative">
                                     <MdOutlineEmail className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="email"
                                         placeholder="email@example.com"
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
                                     />
                                 </div>
                             </div>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Password</label>
+                                <label className="text-xl font-semibold text-black">Password</label>
                                 <div className="w-full relative">
                                     <CiLock className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="password"
                                         placeholder="Password must be at least 8 characters, including uppercase, lowercase, numbers and special characters"
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                     />
                                 </div>
                             </div>
                             <div className="flex flex-col space-y-3 my-3">
-                                <label className="text-xl font-semibold">Confirm Password</label>
+                                <label className="text-xl font-semibold text-black">Confirm Password</label>
                                 <div className="w-full relative">
                                     <CiLock className="absolute top-3.5 left-2 h-4 w-4 bottom-0 text-2xl text-gray-500" />
                                     <input
                                         type="password"
                                         placeholder="Re-enter password"
-                                        className="border pl-7 py-2 rounded-lg w-full"
+                                        className="border pl-7 py-2 rounded-lg w-full text-black"
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
                                     />

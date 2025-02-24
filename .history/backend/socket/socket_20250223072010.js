@@ -1403,7 +1403,7 @@ const setUpSocket = (server) => {
                     socket.emit('error', { message: error.message });
                 }
             })
-            socket.on('toggle_search', (data) => {
+            socket.on('toggle_search', (data) =>{
                 socket.to(data.conversationId).emit('toggle_search', data);
                 io.emit('toggle_search', data);
             })
@@ -1857,7 +1857,6 @@ const setUpSocket = (server) => {
                         });
                     }
 
-                    // 1. Update friendship status
                     const friendship = await Friendships.findByIdAndUpdate(
                         requestId,
                         { status },
@@ -1869,36 +1868,13 @@ const setUpSocket = (server) => {
                             message: 'Friend request not found'
                         });
                     }
-
-                    // 2. Create or update conversation
                     let conversation = await Conversation.findOne({
+                        
+                    })
+                    const existingConversation = await Conversation.findOne({
                         type: 'private',
                         participants: { $all: [friendship.requester._id, friendship.recipient._id] }
-                    });
-
-                    if (!conversation) {
-                        // Create new conversation if it doesn't exist
-                        conversation = new Conversation({
-                            type: 'private',
-                            participants: [friendship.requester._id, friendship.recipient._id],
-                            creator: userId,
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                            isFriendshipPending: false,
-                            friendRequestStatus: 'none',
-                            isVisible: true // Make sure conversation is visible
-                        });
-                        await conversation.save();
-                    } else {
-                        // Update existing conversation
-                        conversation.isFriendshipPending = false;
-                        conversation.friendRequestStatus = 'none';
-                        conversation.isVisible = true;
-                        await conversation.save();
-                    }
-
-                    // 3. Populate conversation details
-                    conversation = await Conversation.findById(conversation._id)
+                    })
                         .populate('participants', 'name avatar status lastActive')
                         .populate({
                             path: 'lastMessage',
@@ -1908,8 +1884,32 @@ const setUpSocket = (server) => {
                             }
                         });
 
-                    // 4. Create notifications for both users
-                    // Notification for recipient (person accepting the request)
+
+                    const updatedConversation = await Conversation.findOneAndUpdate(
+                        {
+                            type: 'private',
+                            participants: { $all: [friendship.requester._id, friendship.recipient._id] }
+                        },
+                        {
+                            friendRequestStatus: status,
+                            isFriendshipPending: false,
+                            friendRequestSender: null,
+                            friendRequestId: null
+                        },
+                        { new: true }
+                    )
+                        .populate('participants', 'name avatar status lastActive')
+                        .populate({
+                            path: 'lastMessage',
+                            populate: {
+                                path: 'sender',
+                                select: 'name avatar status lastActive'
+                            }
+                        })
+                    if (!updatedConversation.lastMessage && existingConversation.lastMessage) {
+                        updatedConversation.lastMessage = existingConversation.lastMessage;
+                    }
+
                     await Notifications.findOneAndUpdate(
                         {
                             referenceId: requestId,
@@ -1917,18 +1917,20 @@ const setUpSocket = (server) => {
                             userId: userId
                         },
                         {
-                            type: 'friend_request_accepted',
-                            content: `You have accepted the friend request from ${friendship.requester.name}`,
+                            type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
+                            content: status === 'accepted'
+                                ? `You have accepted the friend request from ${friendship.requester.name}`
+                                : `You have rejected the friend request from ${friendship.requester.name}`,
                             isRead: true
                         }
                     );
-
-                    // Notification for requester
                     const requesterNotification = new Notifications({
                         userId: friendship.requester._id,
-                        type: 'friend_request_accepted',
+                        type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
                         referenceId: requestId,
-                        content: `${friendship.recipient.name} accepted your friend request`,
+                        content: status === 'accepted'
+                            ? `${friendship.recipient.name} accepted your friend request`
+                            : `${friendship.recipient.name} rejected your friend request`,
                         isRead: false,
                         sender: {
                             _id: userId,
@@ -1938,86 +1940,125 @@ const setUpSocket = (server) => {
                     });
                     await requesterNotification.save();
 
-                    // 5. Format conversation for client
-                    const enrichedConversation = {
-                        _id: conversation._id.toString(),
-                        type: 'private',
-                        participants: conversation.participants.map(p => ({
-                            _id: p._id.toString(),
-                            name: p.name,
-                            avatar: p.avatar,
-                            status: p.status,
-                            lastActive: p.lastActive
-                        })),
-                        lastMessage: conversation.lastMessage,
-                        createdAt: conversation.createdAt,
-                        updatedAt: conversation.updatedAt,
-                        isFriendshipPending: false,
-                        friendRequestStatus: 'none',
-                        isVisible: true
-                    };
 
-                    // 6. Emit events to both users
-                    const requesterSocket = Array.from(io.sockets.sockets.values())
-                        .find(s => s.user?._id?.toString() === friendship.requester._id.toString());
+                    io.to(friendship.requester._id.toString()).emit('conversation:updated', updatedConversation);
+                    io.to(friendship.recipient._id.toString()).emit('conversation:updated', updatedConversation);
 
-                    const recipientSocket = Array.from(io.sockets.sockets.values())
-                        .find(s => s.user?._id?.toString() === friendship.recipient._id.toString());
+                    const requesterSockets = Array.from(io.sockets.sockets.values())
+                        .filter(socket => socket.user?._id?.toString() === friendship.requester._id.toString());
 
-                    if (requesterSocket) {
-                        requesterSocket.emit('friendRequestResponded', {
+                    const recipientSockets = Array.from(io.sockets.sockets.values())
+                        .filter(socket => socket.user?._id?.toString() === friendship.recipient._id.toString());
+
+                    // Emit to requester's sockets
+                    requesterSockets.forEach(socket => {
+                        socket.emit('friendRequestResponded', {
                             status,
-                            type: 'friend_request_accepted',
-                            notification: requesterNotification,
-                            conversation: {
-                                ...enrichedConversation,
-                                otherParticipant: enrichedConversation.participants.find(
-                                    p => p._id.toString() !== friendship.requester._id.toString()
-                                )
+                            type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
+                            notification: requesterNotification.toObject(),
+                            conversation: updatedConversation
+                        });
+                    });
+
+                    // Emit to recipient's sockets
+                    recipientSockets.forEach(socket => {
+                        socket.emit('friendRequestResponded', {
+                            status,
+                            type: status === 'accepted' ? 'friend_request_accepted' : 'friend_request_rejected',
+                            notification: requesterNotification.toObject(),
+                            conversation: updatedConversation
+                        });
+                    });
+
+                    if (status === 'accepted') {
+                        let existingConversation = await Conversation.findOne({
+                            type: 'private',
+                            participants: { $all: [friendship.requester._id, friendship.recipient._id] }
+                        })
+                            .populate('participants', 'name avatar status lastActive')
+                            .populate({
+                                path: 'lastMessage',
+                                populate: {
+                                    path: 'sender',
+                                    select: 'name avatar status lastActive'
+                                }
+                            });
+
+                        if (!existingConversation) {
+                            existingConversation = new Conversation({
+                                type: 'private',
+                                participants: [friendship.requester._id, friendship.recipient._id],
+                                creator: userId,
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                                isFriendshipPending: false,
+                                friendRequestStatus: 'none'
+                            });
+
+                            await existingConversation.save();
+                            await existingConversation.populate('participants', 'name avatar status lastActive');
+
+                        } else {
+                            existingConversation.isFriendshipPending = false;
+                            existingConversation.friendRequestStatus = 'none';
+                            await existingConversation.save();
+                        }
+
+                        existingConversation = await Conversation.findById(existingConversation._id)
+                            .populate('participants', 'name avatar status lastActive')
+                            .populate({
+                                path: 'lastMessage',
+                                populate: {
+                                    path: 'sender',
+                                    select: 'name avatar status lastActive'
+                                }
+                            });
+                        const enrichedConversation = {
+                            _id: existingConversation._id.toString(),
+                            type: 'private',
+                            participants: existingConversation.participants.map(p => ({
+                                _id: p._id.toString(),
+                                name: p.name,
+                                avatar: p.avatar,
+                                status: p.status,
+                                lastActive: p.lastActive
+                            })),
+                            lastMessage: existingConversation.lastMessage,
+                            createdAt: existingConversation.createdAt,
+                            updatedAt: existingConversation.updatedAt,
+                            otherParticipant: existingConversation.participants.find(
+                                p => p._id.toString() !== userId.toString()
+                            ),
+                            isFriendshipPending: false,
+                            friendRequestStatus: 'none'
+                        };
+
+                        io.sockets.sockets.forEach((socket) => {
+                            // Kiểm tra nếu socket thuộc về người gửi hoặc người nhận friend request
+                            if (
+                                socket.user?._id?.toString() === friendship.recipient._id.toString() ||
+                                socket.user?._id?.toString() === friendship.requester._id.toString()
+                            ) {
+                                socket.emit('conversation:created', {
+                                    ...enrichedConversation,
+                                    otherParticipant: enrichedConversation.participants.find(
+                                        p => p._id.toString() !== socket.user._id.toString()
+                                    )
+                                });
                             }
                         });
 
-                        requesterSocket.emit('conversation:created', {
-                            ...enrichedConversation,
-                            otherParticipant: enrichedConversation.participants.find(
-                                p => p._id.toString() !== friendship.requester._id.toString()
-                            )
-                        });
-                    }
-
-                    if (recipientSocket) {
-                        recipientSocket.emit('friendRequestResponded', {
-                            status,
-                            type: 'friend_request_accepted',
-                            notification: requesterNotification,
-                            conversation: {
-                                ...enrichedConversation,
-                                otherParticipant: enrichedConversation.participants.find(
-                                    p => p._id.toString() !== friendship.recipient._id.toString()
-                                )
-                            }
-                        });
-
-                        recipientSocket.emit('conversation:created', {
-                            ...enrichedConversation,
-                            otherParticipant: enrichedConversation.participants.find(
-                                p => p._id.toString() !== friendship.recipient._id.toString()
-                            )
-                        });
-                    }
-
-                    // 7. Send response to callback if provided
-                    if (callback) {
-                        callback(enrichedConversation);
+                        if (callback) {
+                            callback(enrichedConversation);
+                        }
                     }
 
                 } catch (error) {
-                    console.error('Error in respondToFriendRequest:', error);
                     socket.emit('friendRequestError', {
                         message: 'Error responding to friend request'
-                    });
+                    })
                 }
-            });
+            })
 
             socket.on('markNotificationsAsRead', async (data) => {
                 const { userId, notificationIds } = data;

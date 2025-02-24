@@ -20,7 +20,7 @@ import { HiChevronDown, HiChevronUp, HiX } from "react-icons/hi";
 
 
 const FilePreviewItem = ({ file, onRemove, uploadProgress }) => {
-    const { isDark } = useTheme();
+    const {isDark} = useTheme();
     console.log(file);
     return (
         <div className={`relative flex items-center space-x-2 bg-gray-100 p-2 rounded-lg ${isDark ? 'bg-gray-700' : 'bg-gray-100'}`}>
@@ -188,7 +188,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
         } else if (conversation.type === 'group') {
             setConversationHeader({
                 title: conversation.name || 'Group',
-                subtitle: `${conversation.participants?.length || 0} thành viên`,
+                subtitle: `${conversation.participants?.length || 0} members`,
                 avatar: conversation.avatarGroup,
                 subtitleColor: 'green'
             });
@@ -528,8 +528,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             console.error('No content to send');
             return;
         }
-        const currenPreivews = [...previews];
-        setPreviews([]);
+
         let uploadFiles = [];
 
         if (previews.length > 0) {
@@ -568,41 +567,53 @@ const ChatWindow = ({ conversation, currentUser }) => {
             })
         }
 
+        if (!conversation._id) {
+            socket.emit(
+                'create:conversation',
+                {
+                    receiverId: otherParticipant?._id,
+                    content: messageToSend,
+                },
+                (newConversation) => {
+                    setMessages(newConversation.messages);
+                }
+            );
+        } else {
+            socket.emit('send:message', {
+                conversationId: conversation._id,
+                content: newMessage,
+                type: messageType,
+                attachments: uploadFiles,
+                tempId: messageToSend.tempId,
+                sender: {
+                    _id: currentUser._id,
+                    name: currentUser.name,
+                    avatar: currentUser.avatar
+                },
+                replyTo: replyingTo?._id,
+                createdAt: new Date()
+            }, (error, serverMessage) => {
+                if (error) {
+                    setMessages(prevMessages =>
+                        prevMessages.filter(msg => msg !== messageToSend)
+                    );
+                    showAlert('Message send failed', 'error');
+                    return;
+                }
 
-        socket.emit('send:message', {
-            conversationId: conversation._id,
-            content: newMessage,
-            type: messageType,
-            attachments: uploadFiles,
-            tempId: messageToSend.tempId,
-            sender: {
-                _id: currentUser._id,
-                name: currentUser.name,
-                avatar: currentUser.avatar
-            },
-            replyTo: replyingTo?._id,
-            createdAt: new Date()
-        }, (error, serverMessage) => {
-            if (error) {
-                setMessages(prevMessages =>
-                    prevMessages.filter(msg => msg !== messageToSend)
+                setMessages((prevMessages) =>
+                    prevMessages.map((msg) =>
+                        msg.tempId === messageToSend.tempId ? {
+                            ...serverMessage,
+                            replyTo: replyingTo?._id,
+                        } : msg
+                    )
                 );
-                showAlert('Message send failed', 'error');
-                return;
             }
-
-            setMessages((prevMessages) =>
-                prevMessages.map((msg) =>
-                    msg.tempId === messageToSend.tempId ? {
-                        ...serverMessage,
-                        replyTo: replyingTo?._id,
-                    } : msg
-                )
             );
         }
-        );
-
         setReplyingTo(null);
+        setPreviews([]);
         setUploadProgress({});
         setNewMessage('');
         if (fileInputRef.current) {
@@ -1022,11 +1033,17 @@ const ChatWindow = ({ conversation, currentUser }) => {
 
                             default:
                                 return (
-                                    <div
+                                    <a
                                         key={index}
+                                        href={file.fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
                                         className={`flex items-center space-x-2 bg-gray-100 p-2 rounded-lg mt-2 max-w-full text-black ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-100'}`}
                                         title={file.fileName}
-                                        onClick={() => handleFileDownload(file.fileUrl, file.fileName)}
+                                    // onClick={(e) => {
+                                    //     e.preventDefault();
+                                    //     window.open(file.fileUrl, '_blank', 'noopener,noreferrer');
+                                    // }}
                                     >
                                         <div className="flex items-center w-full overflow-hidden">
                                             <div className="mr-2">
@@ -1036,7 +1053,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
                                                 {truncateFileName(file.fileName)}
                                             </p>
                                         </div>
-                                    </div>
+                                    </a>
                                 );
                         }
                     })}

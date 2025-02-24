@@ -46,7 +46,7 @@ module.exports = {
         'slide-right': 'slideRight 0.7s ease-in-out',
         'slide-down': 'slideDown 1s ease-out forwards',
         'spinner-ring': 'spinnerRing 2s ease-out infinite',
-        'spinner-ball': 'spinnerBall 10s ease-out infinite'
+        'spinner-ball': 'spinnerBall 2s ease-out infinite'
       },
       gridAutoRows: {
         'min': 'minmax(0, 1fr)'

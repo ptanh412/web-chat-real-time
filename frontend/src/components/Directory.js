@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { HiOutlineDotsVertical, HiUserRemove } from "react-icons/hi";
+import React, { useEffect, useRef } from "react";
+import { HiOutlineDotsVertical, HiOutlineSearch, HiUserRemove } from "react-icons/hi";
 import { useState } from "react";
 import { FaImage, FaVideo, FaFilePdf, FaFileWord, FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFile, FaDownload } from "react-icons/fa";
 import { useTheme } from "../context/ThemeContext";
@@ -13,6 +13,9 @@ const Directory = ({ selectedConversation, socket, setSelectedConversation }) =>
   const [files, setFiles] = useState([]);
   const [members, setMembers] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [isSearchMessage, setIsSearchMessage] = useState(false);
+  const [showMenu, setShowmenu] = useState(false);
+  const fileInputRef = useRef(null);
 
   const isCreator = selectedConversation?.creator === user._id;
 
@@ -29,7 +32,7 @@ const Directory = ({ selectedConversation, socket, setSelectedConversation }) =>
     }
   }
 
-  const handleDownloadFile = async (file, e) =>{
+  const handleDownloadFile = async (file, e) => {
     e.preventDefault();
     e.stopPropagation();
     try {
@@ -91,7 +94,7 @@ const Directory = ({ selectedConversation, socket, setSelectedConversation }) =>
       memberId: memberId
     });
   };
- 
+
   useEffect(() => {
     if (!socket || !selectedConversation) return;
 
@@ -217,19 +220,51 @@ const Directory = ({ selectedConversation, socket, setSelectedConversation }) =>
     return Array.isArray(members) ? members.length : 0;
   }
 
+  const handleSearchClick = () => {
+    if (!socket || !selectedConversation) return;
+    
+    socket.emit('toggle_search', {
+      conversationId: selectedConversation._id,
+      isOpen: !isSearchMessage
+    });
+    setIsSearchMessage(!isSearchMessage);
+    setShowmenu(false);
+  }
+  
+
   return (
     <div className={`${isDark ? 'bg-slate-800 text-white' : 'bg-white'} h-full flex flex-col rounded-lg`}>
       {selectedConversation?.type === 'group' ? (
-        <GroupManagement
-          selectedConversation={selectedConversation}
-          socket={socket}
-          setSelectedConversation={setSelectedConversation}
-          onClose={() => setSelectedConversation(null)}
-        />
+        <div>
+          <GroupManagement
+            selectedConversation={selectedConversation}
+            socket={socket}
+            setSelectedConversation={setSelectedConversation}
+            onClose={() => setSelectedConversation(null)}
+          />
+        </div>
       ) : (
         <div className="flex justify-between items-center mt-3 px-5">
           <h1 className="font-bold text-3xl">Directory</h1>
-          <HiOutlineDotsVertical className={`text-3xl text-blue-500  p-1 rounded-full ${isDark ? '' : 'bg-slate-200'} `} />
+          <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <button
+              onClick={() => setShowmenu(!showMenu)}
+              className={`text-3xl text-blue-600 p-1 rounded-full ${isDark ? '' : ''} `}
+            >
+              <HiOutlineDotsVertical className="w-6 h-6" />
+            </button>
+            {showMenu && (
+              <div className={`absolute right-0 top-10 w-48 shadow-lg rounded-lg  z-10 ${isDark ? 'bg-gray-500' : 'bg-white'}`}>
+                <button
+                  onClick={handleSearchClick}
+                  className={`w-full px-4 py-2 text-left  flex items-center space-x-2 ${isDark ? 'hover:bg-gray-600 hover:rounded-lg' : 'hover:bg-gray-100'}`}
+                >
+                  <HiOutlineSearch className="text-blue-500" />
+                  <span>Search Messages</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
       )}
@@ -310,7 +345,7 @@ const Directory = ({ selectedConversation, socket, setSelectedConversation }) =>
                       <button
                         onClick={(e) => handleDownloadFile(file, e)}
                       >
-                        <FaDownload className="text-blue-500"/>
+                        <FaDownload className="text-blue-500" />
                       </button>
                     )}
                   </div>

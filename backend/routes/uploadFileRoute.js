@@ -171,7 +171,7 @@ router.post('/multiple', auth, uploadCloud.array('files', 10), async (req, res) 
                 },
                     process.env.JWT_SECRET_KEY,
                     {
-                        expiresIn: '10m'
+                        expiresIn: '7d'
                     }
                 );
 

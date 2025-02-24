@@ -1,6 +1,6 @@
 import { useUser } from "../context/UserContext"
 import { useState, useEffect, useRef, useContext, useCallback, useMemo } from "react";
-import { HiPhotograph, HiPencil, HiOutlineDotsVertical, HiPlus } from "react-icons/hi";
+import { HiPhotograph, HiPencil, HiOutlineDotsVertical, HiPlus, HiOutlineSearch } from "react-icons/hi";
 import { HiUserAdd, HiUserRemove, HiLogout } from "react-icons/hi";
 import axios from "axios";
 import { AlertContext } from "../context/AlertMessage";
@@ -16,6 +16,7 @@ const GroupManagement = ({ selectedConversation, socket, onClose, setSelectedCon
 	const { showAlert } = useContext(AlertContext);
 	const [showFriendList, setShowFriendList] = useState(false);
 	const [friends, setFriends] = useState([]);
+	const [isSearchMessage, setIsSearchMessage] = useState(false);
 
 	useEffect(() => {
 		setGroupName(selectedConversation?.name || '');
@@ -175,6 +176,16 @@ const GroupManagement = ({ selectedConversation, socket, onClose, setSelectedCon
 		});
 		onClose();
 	}
+
+	const handleMessageClick = () =>{
+		if(!socket || !selectedConversation) return;
+		socket.emit('toggle_search', {
+			conversationId: selectedConversation._id,
+			isOpen: !isSearchMessage
+		  });
+		  setIsSearchMessage(!isSearchMessage);
+		  setShowMenu(false);
+	}
 	return (
 		<div className="relative">
 			<div className="flex items-center space-x-4 p-4">
@@ -236,6 +247,13 @@ const GroupManagement = ({ selectedConversation, socket, onClose, setSelectedCon
 					>
 						<HiLogout className="text-red-500" />
 						<span>Leave Group</span>
+					</button>
+					<button
+						onClick={handleMessageClick}
+						className={`w-full px-4 py-2 text-left  flex items-center space-x-2 ${isDark ? 'hover:bg-gray-600' : 'hover:bg-gray-100'}`}
+					>
+						<HiOutlineSearch className="text-blue-500"/>
+						<span>Search Messages</span>
 					</button>
 				</div>
 			)}

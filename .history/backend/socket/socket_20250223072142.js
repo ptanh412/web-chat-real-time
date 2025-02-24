@@ -1847,6 +1847,9 @@ const setUpSocket = (server) => {
                 }
             })
 
+            // Client-side: handleAcceptFriendRequest function
+
+            // Server-side: Socket event handler
             socket.on('respondToFriendRequest', async (data, callback) => {
                 const { requestId, status, userId } = data;
 

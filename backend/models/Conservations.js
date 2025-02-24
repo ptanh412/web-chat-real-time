@@ -1,6 +1,14 @@
 const mongoose = require('mongoose');
 
 const conversationSchema = new mongoose.Schema({
+    isHidden: {
+        type: Boolean,
+        default: true,
+    },
+    isVisible:{
+        type: Boolean,
+        default: true,
+    },
     type:{
         type: String,
         required: true,
@@ -49,9 +57,19 @@ const conversationSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
-    friendRequestStatus :{
+    friendRequestSender: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Users',
+        default: null
+    },
+    friendRequestId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Friendships',
+        default: null
+    },
+    friendRequestStatus: {
         type: String,
-        enum: ['pending', 'recalled', 'none'],
+        enum: ['none','pending', 'accepted', 'rejected'],
         default: 'none',
     }
 });

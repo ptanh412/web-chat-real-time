@@ -1,16 +1,18 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { useUser } from '../context/UserContext';
-import { FaFacebook, FaInstagram } from 'react-icons/fa';
+import { FaFacebook, FaInstagram, FaUser, FaUsers } from 'react-icons/fa';
 import { CiEdit, CiTwitter } from 'react-icons/ci';
 import axios from 'axios';
 import { AlertContext } from '../context/AlertMessage';
 import { CiCamera } from "react-icons/ci";
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
+
 const Conversations = () => {
-	const {isDark} = useTheme();
+	const { isDark } = useTheme();
 	const [conversations, setConversations] = useState([]);
 	const { user, socket } = useUser();
+	const [activeTab, setActiveTab] = useState('friends');
 	const navigate = useNavigate();
 
 	useEffect(() => {
@@ -36,10 +38,10 @@ const Conversations = () => {
 			socket.off('conversations:list');
 		};
 	}, [socket, user?._id]);
-	useEffect(() => {
-		console.log('Conversations state updated:', conversations);
-	}, [conversations]);
 
+	const filteredConversations = conversations.filter((conversation) =>
+		activeTab === 'friends' ? conversation.type === 'private' : conversation.type === 'group'
+	)
 
 	const handleSendMessage = (conversation) => {
 		navigate('/chat', {
@@ -53,21 +55,53 @@ const Conversations = () => {
 
 	return (
 		<div className="space-y-4">
-			<h2 className="text-lg font-semibold mb-4">Recent Conversations</h2>
-			<div className="gap-4">
-				{conversations.slice(0, 6).map((conversation) => (
+			<div className="flex justify-between items-center mb-6">
+				<h2 className="text-xl font-bold">Conversations</h2>
+				<div className="flex space-x-2">
+					<button
+						onClick={() => setActiveTab('friends')}
+						className={`flex items-center px-4 py-2 rounded-lg transition-colors ${activeTab === 'friends'
+							? 'bg-blue-500 text-white'
+							: `${isDark ? 'bg-gray-700' : 'bg-gray-200'}`
+							}`}
+					>
+						<FaUser className="mr-2" />
+						Friends
+					</button>
+					<button
+						onClick={() => setActiveTab('groups')}
+						className={`flex items-center px-4 py-2 rounded-lg transition-colors ${activeTab === 'groups'
+							? 'bg-blue-500 text-white'
+							: `${isDark ? 'bg-gray-700' : 'bg-gray-200'}`
+							}`}
+					>
+						<FaUsers className="mr-2" />
+						Groups
+					</button>
+				</div>
+			</div>
+			<div className="grid grid-cols-2 gap-4">
+				{filteredConversations.map((conversation) => (
 					<div
 						key={conversation._id}
-						className={`flex items-center justify-between p-4 rounded-lg w-full ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}
+						className={`flex items-center justify-between p-4 rounded-lg ${isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-50 hover:bg-gray-100'
+							} transition-colors duration-300 cursor-pointer`}
+						onClick={() => handleSendMessage(conversation)}
 					>
 						<div className="flex items-center space-x-3">
-							<img
-								src={conversation.type === 'private'
-									? conversation.otherParticipant?.avatar
-									: conversation.avatarGroup}
-								alt="Avatar"
-								className="w-10 h-10 rounded-full"
-							/>
+							<div className="relative">
+								<img
+									src={conversation.type === 'private'
+										? conversation.otherParticipant?.avatar
+										: conversation.avatarGroup}
+									alt="Avatar"
+									className="w-12 h-12 rounded-full object-cover"
+								/>
+								<span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${conversation.type === 'private' && conversation.otherParticipant?.status === 'online'
+									? 'bg-green-500'
+									: 'bg-gray-400'
+									}`}></span>
+							</div>
 							<div>
 								<h3 className="font-medium">
 									{conversation.type === 'private'
@@ -83,12 +117,10 @@ const Conversations = () => {
 								</p>
 							</div>
 						</div>
-						<button
-							onClick={() => handleSendMessage(conversation)}
-							className="px-3 py-1 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm"
-						>
-							Send Message
-						</button>
+						<div className={`px-3 py-1 rounded-full text-xs ${isDark ? 'bg-gray-600' : 'bg-gray-200'
+							}`}>
+							{conversation.type === 'private' ? 'Send message' : 'Send message'}
+						</div>
 					</div>
 				))}
 			</div>
@@ -96,7 +128,7 @@ const Conversations = () => {
 	);
 }
 const Profile = () => {
-	const {isDark} = useTheme();
+	const { isDark } = useTheme();
 	const { user, updateUser } = useUser();
 	const [isUploading, setIsUploading] = useState(false);
 	const [showChangePassword, setShowChangePassword] = useState(false);
@@ -141,7 +173,7 @@ const Profile = () => {
 		}))
 	}
 
-	const handlCancel = (field) => {
+	const handleCancel = (field) => {
 		setEditStates((prev) => ({
 			...prev,
 			[field]: false
@@ -236,7 +268,7 @@ const Profile = () => {
 
 	const EditableField = ({ field, label }) => {
 		const inputRef = useRef(null);
-		const {isDark} = useTheme();
+		const { isDark } = useTheme();
 
 		useEffect(() => {
 			if (editStates[field] && inputRef.current) {
@@ -245,18 +277,18 @@ const Profile = () => {
 		}, [editStates[field]])
 
 		return (
-			<div className='relative group'>
-				<h2 className='text-lg font-semibold mb-1 flex justify-between items-center'>
-					<p className='mt-3'>{label}</p>
+			<div className="relative group bg-opacity-50 p-4 rounded-lg transition-all duration-300 hover:bg-opacity-100">
+				<h2 className="text-lg font-semibold mb-1 flex justify-between items-center">
+					<p className="mt-3">{label}</p>
 					{!editStates[field] && (
 						<CiEdit
-							className='ml-2 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity duration-300'
+							className="ml-2 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity duration-300"
 							onClick={() => handleEdit(field)}
 						/>
 					)}
 				</h2>
 				{editStates[field] ? (
-					<div className='flex items-center space-x-4 mt-2'>
+					<div className="flex items-center space-x-4 mt-2">
 						<input
 							ref={inputRef}
 							type="text"
@@ -265,23 +297,24 @@ const Profile = () => {
 								...prev,
 								[field]: e.target.value
 							}))}
-							className={`border rounded-lg border-gray-300 px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 w-96 ${isDark ? 'bg-gray-800' : 'bg-white'}`}
+							className={`border rounded-lg border-gray-300 px-4 py-2 focus:outline-none focus:ring focus:border-blue-500 w-96 ${isDark ? 'bg-gray-700' : 'bg-white'
+								}`}
 						/>
 						<button
 							onClick={() => handleSave(field)}
-							className='bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors duration-300 font-semibold'
+							className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors duration-300 font-semibold"
 						>
 							Save
 						</button>
 						<button
-							onClick={() => handlCancel(field)}
-							className='bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors duration-300 font-semibold'
+							onClick={() => handleCancel(field)}
+							className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors duration-300 font-semibold"
 						>
 							Cancel
 						</button>
 					</div>
 				) : (
-					<p className='text-gray-600'>
+					<p className="text-gray-600">
 						{user[field] || 'Not provided'}
 					</p>
 				)}
@@ -289,21 +322,38 @@ const Profile = () => {
 		)
 	}
 	return (
-		<div className={`p-20 shadow-lg rounded-lg w-full ${isDark ? 'bg-gray-800 ': 'bg-white'}`}>
-			<h1 className="text-4xl font-bold mb-6 ">Profile</h1>
-			<div className='border-b-2 mb-3'></div>
-			<div className='flex justify-between items-center mb-6'>
-				<div>
-					<div className="max-w-2xl">
-						<div className="flex items-center space-x-4 mb-6">
-							<div className='relative'>
-								<img src={user.avatar} alt="Profile" className="w-20 h-20 rounded-full" />
+		<div className={`p-8 shadow-lg rounded-lg w-full ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+			<div className="max-w-7xl mx-auto">
+				<div className="flex justify-between items-center mb-8">
+					<h1 className="text-4xl font-bold">Profile</h1>
+					{!isGoogleUser && (
+						<button
+							onClick={() => setShowChangePassword(true)}
+							className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors duration-300 font-semibold"
+						>
+							Change Password
+						</button>
+					)}
+				</div>
+
+				<div className="border-b-2 mb-8"></div>
+
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+					<div className="space-y-6">
+						<div className="flex items-center space-x-6 mb-8">
+							<div className="relative">
+								<img
+									src={user.avatar}
+									alt="Profile"
+									className="w-24 h-24 rounded-full object-cover shadow-lg"
+								/>
 								<button
-									className="absolute right-0 bottom-0 bg-gray-50 rounded-full p-1 cursor-pointer text-lg hover:bg-gray-200 transition-colors duration-300"
+									className={`absolute right-0 bottom-0 ${isDark ? 'bg-gray-700' : 'bg-gray-50'
+										} rounded-full p-2 cursor-pointer text-lg hover:bg-gray-200 transition-colors duration-300 shadow-md`}
 									onClick={handleUploadClick}
 									disabled={isUploading}
 								>
-									<CiCamera className={isDark ? 'text-black' : ''} />
+									<CiCamera className={isDark ? 'text-white' : 'text-black'} />
 								</button>
 								<input
 									id="file-input"
@@ -314,55 +364,53 @@ const Profile = () => {
 								/>
 							</div>
 							<div>
-								<h2 className="text-xl font-semibold">{user.name}</h2>
-								<p className="text-gray-600">{user.status}</p>
+								<h2 className="text-2xl font-semibold">{user.name}</h2>
+								<p className={`${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{user.status}</p>
 							</div>
 						</div>
-					</div>
-				</div>
-				{!isGoogleUser && (
-					<div className='mt-4'>
-						<button
-							onClick={() => setShowChangePassword(true)}
-							className='bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors duration-300 font-semibold'
-						>
-							Change Password
-						</button>
-					</div>
-				)}
 
-			</div>
-			<div className='grid grid-cols-2 gap-10'>
-				<div className='space-y-4'>
-					<div className='space-y-3'>
-						<EditableField field='about' label='About' />
-						<EditableField field='phoneNumber' label='Phone Number' />
-						<EditableField field='email' label='Email' />
-					</div>
-					<div>
-						<h2 className="text-lg font-semibold mb-4">Social</h2>
-						<div className='flex space-x-4 text-2xl'>
-							<FaFacebook />
-							<FaInstagram />
-							<CiTwitter />
+						<div className="space-y-2">
+							<EditableField field="about" label="About" />
+							<EditableField field="phoneNumber" label="Phone Number" />
+							<EditableField field="email" label="Email" />
+							<div className="pt-2 ml-[14px]">
+								<h2 className="text-lg font-semibold mb-4">Social</h2>
+								<div className="flex space-x-6 text-2xl">
+									<div className="transform transition-all duration-300 hover:scale-125 hover:-translate-y-1">
+										<FaFacebook
+											className="text-blue-600 hover:text-blue-700 cursor-pointer animate-pulse hover:animate-none transition-colors duration-300 "
+										/>
+									</div>
+									<div className="transform transition-all duration-300 hover:scale-125 hover:-translate-y-1">
+										<FaInstagram
+											className="text-pink-600 hover:text-pink-700 cursor-pointer transition-all duration-300 hover:rotate-12 "
+										/>
+									</div>
+									<div className="transform transition-all duration-300 hover:scale-125 hover:-translate-y-1">
+										<CiTwitter
+											className="text-blue-400 hover:text-blue-500 cursor-pointer transition-all duration-300 hover:-rotate-12 "
+										/>
+									</div>
+								</div>
+							</div>
 						</div>
+
+					</div>
+
+					<div className="lg:pl-6">
+						<Conversations />
 					</div>
 				</div>
-				<div className='mr-5'>
-					<Conversations />
-				</div>
+
 				{showChangePassword && !isGoogleUser && (
-					<ChangePasswordModal
-						onClose={() => setShowChangePassword(false)}
-					// Add your password change logic here
-					/>
+					<ChangePasswordModal onClose={() => setShowChangePassword(false)} />
 				)}
 			</div>
 		</div>
 	)
 }
 const ChangePasswordModal = ({ onClose }) => {
-	const {isDark} = useTheme();
+	const { isDark } = useTheme();
 	const { user } = useUser();
 	const { showAlert } = useContext(AlertContext);
 	const [password, setPassword] = useState({

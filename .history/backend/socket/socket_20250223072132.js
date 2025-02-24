@@ -1847,177 +1847,204 @@ const setUpSocket = (server) => {
                 }
             })
 
-            socket.on('respondToFriendRequest', async (data, callback) => {
-                const { requestId, status, userId } = data;
-
-                try {
-                    if (!requestId || !status || !userId) {
-                        return socket.emit('friendRequestError', {
-                            message: 'Invalid request parameters'
-                        });
-                    }
-
-                    // 1. Update friendship status
-                    const friendship = await Friendships.findByIdAndUpdate(
-                        requestId,
-                        { status },
-                        { new: true }
-                    ).populate('requester recipient');
-
-                    if (!friendship) {
-                        return socket.emit('friendRequestError', {
-                            message: 'Friend request not found'
-                        });
-                    }
-
-                    // 2. Create or update conversation
-                    let conversation = await Conversation.findOne({
-                        type: 'private',
-                        participants: { $all: [friendship.requester._id, friendship.recipient._id] }
-                    });
-
-                    if (!conversation) {
-                        // Create new conversation if it doesn't exist
-                        conversation = new Conversation({
-                            type: 'private',
-                            participants: [friendship.requester._id, friendship.recipient._id],
-                            creator: userId,
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                            isFriendshipPending: false,
-                            friendRequestStatus: 'none',
-                            isVisible: true // Make sure conversation is visible
-                        });
-                        await conversation.save();
-                    } else {
-                        // Update existing conversation
-                        conversation.isFriendshipPending = false;
-                        conversation.friendRequestStatus = 'none';
-                        conversation.isVisible = true;
-                        await conversation.save();
-                    }
-
-                    // 3. Populate conversation details
-                    conversation = await Conversation.findById(conversation._id)
-                        .populate('participants', 'name avatar status lastActive')
-                        .populate({
-                            path: 'lastMessage',
-                            populate: {
-                                path: 'sender',
-                                select: 'name avatar status lastActive'
-                            }
-                        });
-
-                    // 4. Create notifications for both users
-                    // Notification for recipient (person accepting the request)
-                    await Notifications.findOneAndUpdate(
-                        {
-                            referenceId: requestId,
-                            type: 'friend_request',
-                            userId: userId
-                        },
-                        {
-                            type: 'friend_request_accepted',
-                            content: `You have accepted the friend request from ${friendship.requester.name}`,
-                            isRead: true
-                        }
-                    );
-
-                    // Notification for requester
-                    const requesterNotification = new Notifications({
-                        userId: friendship.requester._id,
-                        type: 'friend_request_accepted',
-                        referenceId: requestId,
-                        content: `${friendship.recipient.name} accepted your friend request`,
-                        isRead: false,
-                        sender: {
-                            _id: userId,
-                            name: socket.user?.name,
-                            avatar: socket.user?.avatar
-                        }
-                    });
-                    await requesterNotification.save();
-
-                    // 5. Format conversation for client
-                    const enrichedConversation = {
-                        _id: conversation._id.toString(),
-                        type: 'private',
-                        participants: conversation.participants.map(p => ({
-                            _id: p._id.toString(),
-                            name: p.name,
-                            avatar: p.avatar,
-                            status: p.status,
-                            lastActive: p.lastActive
-                        })),
-                        lastMessage: conversation.lastMessage,
-                        createdAt: conversation.createdAt,
-                        updatedAt: conversation.updatedAt,
-                        isFriendshipPending: false,
-                        friendRequestStatus: 'none',
-                        isVisible: true
-                    };
-
-                    // 6. Emit events to both users
-                    const requesterSocket = Array.from(io.sockets.sockets.values())
-                        .find(s => s.user?._id?.toString() === friendship.requester._id.toString());
-
-                    const recipientSocket = Array.from(io.sockets.sockets.values())
-                        .find(s => s.user?._id?.toString() === friendship.recipient._id.toString());
-
-                    if (requesterSocket) {
-                        requesterSocket.emit('friendRequestResponded', {
-                            status,
-                            type: 'friend_request_accepted',
-                            notification: requesterNotification,
-                            conversation: {
-                                ...enrichedConversation,
-                                otherParticipant: enrichedConversation.participants.find(
-                                    p => p._id.toString() !== friendship.requester._id.toString()
-                                )
-                            }
-                        });
-
-                        requesterSocket.emit('conversation:created', {
-                            ...enrichedConversation,
-                            otherParticipant: enrichedConversation.participants.find(
-                                p => p._id.toString() !== friendship.requester._id.toString()
-                            )
-                        });
-                    }
-
-                    if (recipientSocket) {
-                        recipientSocket.emit('friendRequestResponded', {
-                            status,
-                            type: 'friend_request_accepted',
-                            notification: requesterNotification,
-                            conversation: {
-                                ...enrichedConversation,
-                                otherParticipant: enrichedConversation.participants.find(
-                                    p => p._id.toString() !== friendship.recipient._id.toString()
-                                )
-                            }
-                        });
-
-                        recipientSocket.emit('conversation:created', {
-                            ...enrichedConversation,
-                            otherParticipant: enrichedConversation.participants.find(
-                                p => p._id.toString() !== friendship.recipient._id.toString()
-                            )
-                        });
-                    }
-
-                    // 7. Send response to callback if provided
-                    if (callback) {
-                        callback(enrichedConversation);
-                    }
-
-                } catch (error) {
-                    console.error('Error in respondToFriendRequest:', error);
-                    socket.emit('friendRequestError', {
-                        message: 'Error responding to friend request'
-                    });
-                }
-            });
+// Client-side: handleAcceptFriendRequest function
+const handleAcceptFriendRequest = async (requestId) => {
+    if (socket) {
+      socket.emit('respondToFriendRequest', {
+        requestId,
+        status: 'accepted',
+        userId: user._id,
+      });
+  
+      // Update local notifications immediately for better UX
+      setNotifications(prev => prev.map(n => {
+        if (n.referenceId === requestId) {
+          return {
+            ...n,
+            isRead: true,
+            type: 'friend_request_accepted',
+            content: 'You have accepted the friend request',
+          };
+        }
+        return n;
+      }));
+      
+      setUnreadNotificationsCount(prev => Math.max(0, prev - 1));
+    }
+  };
+  
+  // Server-side: Socket event handler
+  socket.on('respondToFriendRequest', async (data, callback) => {
+    const { requestId, status, userId } = data;
+  
+    try {
+      if (!requestId || !status || !userId) {
+        return socket.emit('friendRequestError', {
+          message: 'Invalid request parameters'
+        });
+      }
+  
+      // 1. Update friendship status
+      const friendship = await Friendships.findByIdAndUpdate(
+        requestId,
+        { status },
+        { new: true }
+      ).populate('requester recipient');
+  
+      if (!friendship) {
+        return socket.emit('friendRequestError', {
+          message: 'Friend request not found'
+        });
+      }
+  
+      // 2. Create or update conversation
+      let conversation = await Conversation.findOne({
+        type: 'private',
+        participants: { $all: [friendship.requester._id, friendship.recipient._id] }
+      });
+  
+      if (!conversation) {
+        // Create new conversation if it doesn't exist
+        conversation = new Conversation({
+          type: 'private',
+          participants: [friendship.requester._id, friendship.recipient._id],
+          creator: userId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isFriendshipPending: false,
+          friendRequestStatus: 'none',
+          isVisible: true // Make sure conversation is visible
+        });
+        await conversation.save();
+      } else {
+        // Update existing conversation
+        conversation.isFriendshipPending = false;
+        conversation.friendRequestStatus = 'none';
+        conversation.isVisible = true;
+        await conversation.save();
+      }
+  
+      // 3. Populate conversation details
+      conversation = await Conversation.findById(conversation._id)
+        .populate('participants', 'name avatar status lastActive')
+        .populate({
+          path: 'lastMessage',
+          populate: {
+            path: 'sender',
+            select: 'name avatar status lastActive'
+          }
+        });
+  
+      // 4. Create notifications for both users
+      // Notification for recipient (person accepting the request)
+      await Notifications.findOneAndUpdate(
+        {
+          referenceId: requestId,
+          type: 'friend_request',
+          userId: userId
+        },
+        {
+          type: 'friend_request_accepted',
+          content: `You have accepted the friend request from ${friendship.requester.name}`,
+          isRead: true
+        }
+      );
+  
+      // Notification for requester
+      const requesterNotification = new Notifications({
+        userId: friendship.requester._id,
+        type: 'friend_request_accepted',
+        referenceId: requestId,
+        content: `${friendship.recipient.name} accepted your friend request`,
+        isRead: false,
+        sender: {
+          _id: userId,
+          name: socket.user?.name,
+          avatar: socket.user?.avatar
+        }
+      });
+      await requesterNotification.save();
+  
+      // 5. Format conversation for client
+      const enrichedConversation = {
+        _id: conversation._id.toString(),
+        type: 'private',
+        participants: conversation.participants.map(p => ({
+          _id: p._id.toString(),
+          name: p.name,
+          avatar: p.avatar,
+          status: p.status,
+          lastActive: p.lastActive
+        })),
+        lastMessage: conversation.lastMessage,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+        isFriendshipPending: false,
+        friendRequestStatus: 'none',
+        isVisible: true
+      };
+  
+      // 6. Emit events to both users
+      const requesterSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.user?._id?.toString() === friendship.requester._id.toString());
+      
+      const recipientSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.user?._id?.toString() === friendship.recipient._id.toString());
+  
+      if (requesterSocket) {
+        requesterSocket.emit('friendRequestResponded', {
+          status,
+          type: 'friend_request_accepted',
+          notification: requesterNotification,
+          conversation: {
+            ...enrichedConversation,
+            otherParticipant: enrichedConversation.participants.find(
+              p => p._id.toString() !== friendship.requester._id.toString()
+            )
+          }
+        });
+        
+        requesterSocket.emit('conversation:created', {
+          ...enrichedConversation,
+          otherParticipant: enrichedConversation.participants.find(
+            p => p._id.toString() !== friendship.requester._id.toString()
+          )
+        });
+      }
+  
+      if (recipientSocket) {
+        recipientSocket.emit('friendRequestResponded', {
+          status,
+          type: 'friend_request_accepted',
+          notification: requesterNotification,
+          conversation: {
+            ...enrichedConversation,
+            otherParticipant: enrichedConversation.participants.find(
+              p => p._id.toString() !== friendship.recipient._id.toString()
+            )
+          }
+        });
+        
+        recipientSocket.emit('conversation:created', {
+          ...enrichedConversation,
+          otherParticipant: enrichedConversation.participants.find(
+            p => p._id.toString() !== friendship.recipient._id.toString()
+          )
+        });
+      }
+  
+      // 7. Send response to callback if provided
+      if (callback) {
+        callback(enrichedConversation);
+      }
+  
+    } catch (error) {
+      console.error('Error in respondToFriendRequest:', error);
+      socket.emit('friendRequestError', {
+        message: 'Error responding to friend request'
+      });
+    }
+  });
 
             socket.on('markNotificationsAsRead', async (data) => {
                 const { userId, notificationIds } = data;

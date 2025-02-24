@@ -216,9 +216,24 @@ const Sidebar = () => {
         requestId,
         status: 'accepted',
         userId: user._id,
-      });
-  
-      // Update local notifications immediately for better UX
+      }, (conversation) => {
+        if (conversation) {
+          setNotifications(prev => prev.map(n => {
+            if (n.referenceId === requestId) {
+              return {
+                ...n,
+                isRead: true,
+                type: 'friend_request_accepted',
+                content: 'You have accepted the friend request',
+              };
+            }
+            return n;
+          }));
+
+          setUnreadNotificationsCount(prev => Math.max(0, prev - 1));
+        }
+      })
+
       setNotifications(prev => prev.map(n => {
         if (n.referenceId === requestId) {
           return {
@@ -229,11 +244,10 @@ const Sidebar = () => {
           };
         }
         return n;
-      }));
-      
-      setUnreadNotificationsCount(prev => Math.max(0, prev - 1));
+      }))
+      setUnreadNotificationsCount((prev) => prev - 1 >= 0 ? prev - 1 : 0);
     }
-  };
+  }
 
   const handleRejectFriendRequest = async (requestId) => {
     if (socket) {

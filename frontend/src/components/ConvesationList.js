@@ -190,7 +190,8 @@ const ConvesationList = ({
                 readBy: [
                   ...existingReadBy,
                   { user: user._id, readAt: new Date() }
-                ]
+                ],
+                status: 'read'
               };
             }
           }
@@ -203,27 +204,28 @@ const ConvesationList = ({
     setCurrentConversationId(conversation._id);
   }
 
+
   useEffect(() => {
     if (!socket || !user?._id) return;
 
     const handleStatusUpdate = (updatedMessages) => {
-      setConversations(prevConversations => 
+      setConversations(prevConversations =>
         prevConversations.map(conv => {
-          const relevantMessage = updatedMessages.find(msg => 
+          const relevantMessage = updatedMessages.find(msg =>
             msg.conversationId === conv._id
           );
-          
+
           if (relevantMessage) {
             return {
               ...conv,
-              lastMessage: conv.lastMessage?._id === relevantMessage._id 
+              lastMessage: conv.lastMessage?._id === relevantMessage._id
                 ? {
-                    ...conv.lastMessage,
-                    readBy: relevantMessage.readBy,
-                    status: relevantMessage.status
-                  }
+                  ...conv.lastMessage,
+                  readBy: relevantMessage.readBy,
+                  status: relevantMessage.status
+                }
                 : conv.lastMessage,
-              participantUnreadCount: conv.type === 'group' 
+              participantUnreadCount: conv.type === 'group'
                 ? { ...conv.participantUnreadCount, [user._id]: 0 }
                 : conv.participantUnreadCount,
               unreadCount: conv.type === 'group' ? conv.unreadCount : 0
@@ -242,14 +244,14 @@ const ConvesationList = ({
     };
   }, [socket, user?._id, setSelectedConversation]);
 
-
-
   useEffect(() => {
     if (!socket || !user?._id) {
       return;
     };
 
     const formatConversation = (conversation) => {
+      const isLastMessageRead = conversation.lastMessage?.readBy?.some(r => r.user === user._id) || false;
+      const isSender = conversation.lastMessage?.sender?._id === user._id;
       const formatted = {
         _id: conversation._id,
         type: conversation.type,
@@ -262,7 +264,12 @@ const ConvesationList = ({
           status: p.status,
           lastActive: p.lastActive
         })),
-        unreadCount: conversation.unreadCount || 0
+        unreadCount: conversation.type === 'group'
+          ? conversation.participantUnreadCount?.[user._id]
+          : conversation.unreadCount,// Nếu chưa đọc và là tin nhắn private, ít nhất là 1
+        participantUnreadCount: conversation.participantUnreadCount || {},
+        visible: conversation.isVisible,
+        creator: conversation.creator,
       };
 
       if (conversation.lastMessage) {
@@ -273,6 +280,10 @@ const ConvesationList = ({
         formatted.lastMessage = {
           ...conversation.lastMessage,
           content: personalizedMsg?.content || conversation.lastMessage.content,
+          readBy: conversation.lastMessage.readBy || [],
+          isRead: isLastMessageRead,
+          isSender: isSender,
+          isUnread: !isLastMessageRead && !isSender
         }
       }
 
@@ -282,7 +293,8 @@ const ConvesationList = ({
           name: conversation.name,
           avatarGroup: conversation.avatarGroup,
           creator: conversation.creator,
-          unreadCount: conversation.participantUnreadCounts?.[user._id] || 0,
+          participantUnreadCount: conversation.participantUnreadCount || {},
+          unreadCount: conversation.participantUnreadCount?.[user._id],
           lastMessage: conversation.lastMessage ? {
             ...conversation.lastMessage,
             readBy: conversation.lastMessage.readBy || []
@@ -299,7 +311,14 @@ const ConvesationList = ({
             avatar: conversation.otherParticipant.avatar,
             status: conversation.otherParticipant.status,
             lastActive: conversation.otherParticipant.lastActive
-          }
+          },
+          unreadCount: conversation.unreadCount,
+          isFriendshipPending: conversation.isFriendshipPending,
+          friendRequestStatus: conversation.friendRequestStatus,
+          friendRequestSender: conversation.friendRequestSender,
+          friendRequestId: conversation.friendRequestId,
+          isHidden: conversation.isHidden,
+          isVisible: conversation.isVisible
         };
       }
 
@@ -308,8 +327,18 @@ const ConvesationList = ({
     socket.emit('get:conversations', user._id);
 
     socket.on('conversations:list', (conversationList) => {
-      const formattedConversations = conversationList.map(formatConversation);
-      const sortedConversations = formattedConversations.sort((a, b) => {
+      const formattedConversations = conversationList.map(conv => {
+        // Đảm bảo readBy array tồn tại
+        if (conv.lastMessage && !conv.lastMessage.readBy) {
+          conv.lastMessage.readBy = [];
+        }
+        return formatConversation(conv);
+      });
+      const visibleConversation = formattedConversations.filter(conv => {
+        if (conv.type === 'group') return true;
+        return conv.isVisible === true;
+      });
+      const sortedConversations = visibleConversation.sort((a, b) => {
         const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
         const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
         return new Date(bTime) - new Date(aTime);
@@ -317,15 +346,52 @@ const ConvesationList = ({
       setConversations(sortedConversations);
     });
 
-    const handleNewConversation = (data) => {
-      const { conversation } = data;
+    const handleNewConversation = (conversation) => {
       if (conversation) {
         setConversations(prev => {
-          const filter = prev.filter(conv => conv._id !== conversation._id);
-          return [formatConversation(conversation), ...filter];
+          // Check if conversation already exists
+          const existingConversationIndex = prev.findIndex(conv => conv._id === conversation._id);
+          
+          // Format the new conversation
+          const formattedConversation = formatConversation(conversation);
+          
+          if (existingConversationIndex !== -1) {
+            // If conversation exists, merge data and preserve lastMessage
+            const existingConversation = prev[existingConversationIndex];
+            const mergedConversation = {
+              ...existingConversation,
+              ...formattedConversation,
+              lastMessage: formattedConversation.lastMessage || existingConversation.lastMessage,
+            };
+            
+            // Create a new array with the merged conversation
+            const updatedConversations = [...prev];
+            updatedConversations[existingConversationIndex] = mergedConversation;
+            
+            return updatedConversations.sort((a, b) => {
+              const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
+              const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
+              return new Date(bTime) - new Date(aTime);
+            });
+          } else if (formattedConversation.isVisible) {
+            // If it's a new conversation, just add it
+            return [formattedConversation, ...prev].sort((a, b) => {
+              const aTime = a.lastMessage?.createdAt || a.updatedAt || new Date(0);
+              const bTime = b.lastMessage?.createdAt || b.updatedAt || new Date(0);
+              return new Date(bTime) - new Date(aTime);
+            });
+          }
+          
+          return prev;
         });
       }
     };
+    
+    socket.on('connect', () => {
+      console.log('Socket connected');
+      // Re-fetch conversations when socket reconnects
+      socket.emit('get:conversations', user._id);
+    });
 
 
     socket.on('conversation:created', handleNewConversation);
@@ -333,10 +399,20 @@ const ConvesationList = ({
 
     socket.on('new:message', (newMessage) => {
       setConversations(prevConversations => {
+        const existingConvIndex = prevConversations.findIndex(conv => conv._id === newMessage.conversationId);
+        const conversationExists = existingConvIndex !== -1;
+
+        if (!conversationExists) {
+          socket.emit('get:conversations', user._id);
+        }
         const updatedConvs = prevConversations.map(conv => {
           if (conv._id === newMessage.conversationId) {
             const isSender = newMessage.sender._id === user._id;
             const isCurrentView = conv._id === currentConversationId;
+
+            const isRead = newMessage.readBy?.some(
+              r => r.user.toString() === user._id.toString()
+            )
 
             const personalizedMsg = newMessage.personalizedContent?.find(
               pc => pc.userId.toString() === user._id.toString()
@@ -355,18 +431,16 @@ const ConvesationList = ({
                     name: newMessage.sender.name,
                     avatar: newMessage.sender.avatar
                   },
-                  readBy: isCurrentView || isSender ?
-                    [...(newMessage.readBy || []), { user: user._id, readAt: new Date() }] :
-                    newMessage.readBy
+                  readBy: newMessage.readBy || [],
+                  isRead: isCurrentView || isSender,
+                  isSender
                 },
                 updatedAt: new Date(newMessage.createdAt || newMessage.sentAt),
-              }
-
-              if (!isSender || isCurrentView) {
-                updatedConv.participantUnreadCount = {
+                participantUnreadCount: !isSender ? {
                   ...conv.participantUnreadCount,
-                  [user._id]: (conv.participantUnreadCount?.[user._id] || 0) + 1
-                };
+                  [user._id]: ((conv.participantUnreadCount?.[user._id] || 0) + (!isCurrentView ? 1 : 0))
+                } : conv.participantUnreadCount,
+                isVisible: true
               }
               return updatedConv;
             }
@@ -380,15 +454,16 @@ const ConvesationList = ({
                   name: newMessage.sender.name,
                   avatar: newMessage.sender.avatar
                 },
-                readBy: isCurrentView || isSender ?
-                  [...(newMessage.readBy || []), { user: user._id, readAt: new Date() }] :
-                  newMessage.readBy
+                readBy: newMessage.readBy || [],
+                isRead: isRead,
+                isSender
               },
-              unreadCount: (!isSender && !isCurrentView) ? (conv.unreadCount || 0) + 1 : 0,
+              unreadCount: (!isSender && !isCurrentView)
+                ? (conv.unreadCount || 0) + 1
+                : conv.unreadCount || 0,
               updatedAt: new Date(newMessage.createdAt || newMessage.sentAt),
+              isVisible: true
             }
-
-
           }
           return conv;
         });
@@ -407,8 +482,8 @@ const ConvesationList = ({
             const updatedConversation = { ...conv };
 
             const unreadStatus = conv.type === 'group'
-              ? conv.participantUnreadCount?.[user._id] || 0
-              : conv.unreadCount || 0;
+              ? conv.participantUnreadCount?.[user._id]
+              : conv.unreadCount;
 
             const updatedLastMessage = {
               ...conv.lastMessage,
@@ -467,28 +542,49 @@ const ConvesationList = ({
 
     const handleConversationUpdate = (updatedConversation) => {
       setConversations(prev => {
-
         return prev.map(conv => {
-
           if (conv._id === updatedConversation._id) {
+            // Create a merged lastMessage object that preserves existing data
+            let mergedLastMessage = null;
+            
+            // If both existing and updated conversations have lastMessage
+            if (conv.lastMessage && updatedConversation.lastMessage) {
+              mergedLastMessage = {
+                ...conv.lastMessage,
+                ...updatedConversation.lastMessage,
+                sender: updatedConversation.lastMessage.sender 
+                  ? {
+                      _id: updatedConversation.lastMessage.sender._id || conv.lastMessage.sender?._id,
+                      name: updatedConversation.lastMessage.sender.name || conv.lastMessage.sender?.name,
+                      avatar: updatedConversation.lastMessage.sender.avatar || conv.lastMessage.sender?.avatar,
+                      status: updatedConversation.lastMessage.sender.status || conv.lastMessage.sender?.status,
+                      lastActive: updatedConversation.lastMessage.sender.lastActive || conv.lastMessage.sender?.lastActive
+                    }
+                  : conv.lastMessage.sender,
+                readBy: updatedConversation.lastMessage.readBy || conv.lastMessage.readBy || []
+              };
+            }
+            // If only existing conversation has lastMessage
+            else if (conv.lastMessage && !updatedConversation.lastMessage) {
+              mergedLastMessage = conv.lastMessage;
+            }
+            // If only updated conversation has lastMessage
+            else if (!conv.lastMessage && updatedConversation.lastMessage) {
+              mergedLastMessage = updatedConversation.lastMessage;
+            }
+            
+            // Create the updated conversation with merged data
             const updatedConv = {
               ...conv,
               ...updatedConversation,
+              lastMessage: mergedLastMessage,
               participants: updatedConversation.participants || conv.participants,
-              lastMessage: updatedConversation.lastMessage ? {
-                ...updatedConversation.lastMessage,
-                sender: {
-                  _id: updatedConversation.lastMessage?.sender?._id || conv.lastMessage?.sender?._id,
-                  name: updatedConversation.lastMessage?.sender?.name || conv.lastMessage?.sender?.name,
-                  avatar: updatedConversation.lastMessage?.sender?.avatar || conv.lastMessage?.sender?.avatar,
-                  status: updatedConversation.lastMessage?.sender?.status || conv.lastMessage?.sender?.status,
-                  lastActive: updatedConversation.lastMessage?.sender?.lastActive || conv.lastMessage?.sender?.lastActive
-                }
-              } : conv.lastMessage,
             };
+            
             if (conv.type === 'private' && conv.otherParticipant) {
-              updatedConv.otherParticipant = conv.otherParticipant;
+              updatedConv.otherParticipant = updatedConversation.otherParticipant || conv.otherParticipant;
             }
+            
             return updatedConv;
           }
           return conv;
@@ -499,8 +595,12 @@ const ConvesationList = ({
         });
       });
     };
+
     socket.on('message:recalled', handleMessageRecall);
     socket.on('conversation:updated', handleConversationUpdate);
+    socket.on('reload:conversations', () => {
+      socket.emit('get:conversations', user._id);
+    });
 
     return () => {
       socket.off('conversations:list');
@@ -508,6 +608,8 @@ const ConvesationList = ({
       socket.off('conversation:updated', handleConversationUpdate);
       socket.off('new:message');
       socket.off('message:recalled', handleMessageRecall);
+      socket.off('connect');
+      socket.off('reload:conversations');
     }
 
   }, [socket, user?._id, setSelectedConversation]);
@@ -605,7 +707,12 @@ const ConvesationList = ({
 
     const isSender = lastMessage.sender?._id === user?._id;
 
-    const isRead = lastMessage.readBy?.some(r => r.user === user._id) || isSender;
+    const isRead = lastMessage.readBy?.some(r =>
+      r.user.toString() === user._id.toString()
+    );
+    
+    const isCurrentConv = conversation._id === currentConversationId;
+
     const isUnread = !isSender && !isRead;
 
     // Format nội dung tin nhắn
@@ -719,19 +826,24 @@ const ConvesationList = ({
         receiverId: receiver._id,
         userId: user._id,
         content: null,
+        showOnlyToCreator: true
       }, (newConversation) => {
+        const converstionVisible = {
+          ...newConversation,
+          isVisible: true
+        }
         setConversations(prev => {
           const exists = prev.findIndex(conv => conv._id === newConversation._id);
 
           if (exists !== -1) {
             const updatedConversations = [...prev];
             updatedConversations.splice(exists, 1);
-            return [newConversation, ...updatedConversations];
+            return [converstionVisible, ...updatedConversations];
           } else {
-            return [newConversation, ...prev];
+            return [converstionVisible, ...prev];
           }
         })
-        setSelectedConversation(newConversation);
+        setSelectedConversation(converstionVisible);
         setShowListFriend(false);
       });
     }
@@ -868,8 +980,6 @@ const ConvesationList = ({
           conversations={conversations}
           setSelectedConversation={setSelectedConversation}
           isDark={isDark}
-        // searchTerm={searchTerm}
-        // setSearchTerm={setSearchTerm}
         />
       </div>
       <div className="flex-1 overflow-hidden">
@@ -877,23 +987,27 @@ const ConvesationList = ({
           <div className="space-y-6 py-5">
             {conversations.map((conversation) => {
               const messageInfo = formatLastMessage(conversation);
-              const isCurrentConversation = conversation._id === currentConversationId;
 
               const showUnreadCount = (conversation) => {
-                const isCurrentConversation = conversation._id === currentConversationId;
 
-                if (isCurrentConversation) return false;
+                const lastMessage = conversation.lastMessage;
+                if (!lastMessage) return false;
+
+                const isSender = lastMessage?.sender?._id === user?._id;
+
+                const isMessageRead = lastMessage?.readBy?.some(r =>
+                  r.user.toString() === user._id.toString()
+                );
 
                 if (conversation.type === 'group') {
-                  return (conversation.participantUnreadCount?.[user._id] || 0) > 0;
+                  const unreadCount = conversation.participantUnreadCount?.[user._id] || 0;
+                  return !isMessageRead && !isSender && unreadCount > 0;
                 }
 
-                return (conversation.unreadCount || 0) > 0;
-              }
+                const unreadCount = conversation.unreadCount || 0;
 
-              const unreadCount = conversation.type === 'group'
-                ? conversation.participantUnreadCount?.[user._id] || 0
-                : conversation.unreadCount || 0;
+                return !isMessageRead && !isSender && unreadCount > 0;
+              }
               return (
                 <div
                   key={conversation._id}
@@ -910,9 +1024,7 @@ const ConvesationList = ({
                         />
                         {showUnreadCount(conversation) && (
                           <span className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                            {conversation.type === 'group'
-                              ? conversation.participantUnreadCount?.[user._id] || 0
-                              : conversation.unreadCount || 0
+                            {conversation.participantUnreadCount?.[user._id] || 0
                             }
                           </span>
                         )}
@@ -941,7 +1053,7 @@ const ConvesationList = ({
 
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
-                      <h1 className={`text-lg truncate ${messageInfo.isUnread ? 'font-bold' : ''
+                      <h1 className={`text-lg truncate ${(conversation.unreadCount > 0 || conversation.participantUnreadCount?.[user._id] > 0) ? 'font-bold' : ''
                         }`}>
                         {conversation.type === 'group'
                           ? conversation.name
@@ -957,11 +1069,9 @@ const ConvesationList = ({
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <p className={`text-sm truncate max-w-[180px] ${messageInfo.isUnread
-                        ? isDark ? 'text-white font-bold' : 'text-black font-bold'
-                        : messageInfo.isSender
-                          ? 'text-gray-500'
-                          : 'text-gray-500'
+                      <p className={`text-sm truncate max-w-[180px] ${(!messageInfo.isSender && messageInfo.isUnread && (conversation.unreadCount > 0 || conversation.participantUnreadCount?.[user._id] > 0))
+                        ? `${isDark ? 'text-white' : 'text-black'} font-bold`
+                        : 'text-gray-500'
                         }`}>
                         {messageInfo.content}
                       </p>

@@ -188,7 +188,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
         } else if (conversation.type === 'group') {
             setConversationHeader({
                 title: conversation.name || 'Group',
-                subtitle: `${conversation.participants?.length || 0} thành viên`,
+                subtitle: `${conversation.participants?.length || 0} members`,
                 avatar: conversation.avatarGroup,
                 subtitleColor: 'green'
             });

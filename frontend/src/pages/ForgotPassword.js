@@ -23,14 +23,14 @@ const ForgotPassword = () => {
 	return (
 		<div className="flex items-center justify-center min-h-screen bg-gradient-to-t from-[#D3A29D] to-[#9EABA2]">
 			<div className="w-full max-w-md mx-auto shadow-2xl rounded-lg bg-white p-6">
-				<h1 className="text-3xl font-bold mb-4 text-center">Forgot Password</h1>
+				<h1 className="text-3xl font-bold mb-4 text-center text-black">Forgot Password</h1>
 				<form onSubmit={handleSubmit}>
 					<div className="flex flex-col space-y-3 my-3">
-						<label className="text-xl font-semibold">Email</label>
+						<label className="text-xl font-semibold text-black">Email</label>
 						<input
 							type="email"
 							placeholder="Enter your email"
-							className="border pl-7 py-2 rounded-lg w-full"
+							className="border pl-7 py-2 rounded-lg w-full text-black"
 							value={email}
 							onChange={(e) => setEmail(e.target.value)}
 							required

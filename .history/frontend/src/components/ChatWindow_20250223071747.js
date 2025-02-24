@@ -188,7 +188,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
         } else if (conversation.type === 'group') {
             setConversationHeader({
                 title: conversation.name || 'Group',
-                subtitle: `${conversation.participants?.length || 0} thành viên`,
+                subtitle: `${conversation.participants?.length || 0} members`,
                 avatar: conversation.avatarGroup,
                 subtitleColor: 'green'
             });
@@ -529,7 +529,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
             return;
         }
         const currenPreivews = [...previews];
-        setPreviews([]);
+        set
         let uploadFiles = [];
 
         if (previews.length > 0) {
@@ -603,6 +603,7 @@ const ChatWindow = ({ conversation, currentUser }) => {
         );
 
         setReplyingTo(null);
+        setPreviews([]);
         setUploadProgress({});
         setNewMessage('');
         if (fileInputRef.current) {
